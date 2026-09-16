@@ -20,3 +20,5 @@ REPO → ARQUITECTURA → APK BASE → NÚCLEO → UI → DATOS → CONECTIVIDAD
 ## Estado
 
 Fase 0 — Fundación del proyecto.
+
+CI trigger validation.
