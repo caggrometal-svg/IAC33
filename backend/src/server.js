@@ -126,7 +126,7 @@ async function claimNextCommand(actor = 'worker', deviceId = null) {
     const next = await client.query(`SELECT id,type,payload,idempotency_key,expires_at,target_device_id FROM commands WHERE status='PENDING' AND expires_at > now() ${filter} ORDER BY created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1`, params);
     if (!next.rowCount) { await client.query('COMMIT'); return null; }
     const command = next.rows[0];
-    const updated = await client.query(`UPDATE commands SET status='CLAIMED', claimed_by=$2, claimed_at=now(), updated_at=now() WHERE id=$1 AND status='PENDING' AND (target_device_id IS NULL OR target_device_id=$2 OR $2 LIKE 'device:%') RETURNING id,type,payload,idempotency_key,expires_at,status,claimed_at,target_device_id,claimed_by`, [command.id, deviceId ? `device:${deviceId}` : actor]);
+    const updated = await client.query(`UPDATE commands SET status='CLAIMED', claimed_by=$2, claimed_at=now(), updated_at=now() WHERE id=$1 AND status='PENDING' RETURNING id,type,payload,idempotency_key,expires_at,status,claimed_at,target_device_id,claimed_by`, [command.id, deviceId ? `device:${deviceId}` : actor]);
     if (!updated.rowCount) { await client.query('ROLLBACK').catch(() => {}); return null; }
     await client.query('INSERT INTO command_audit(command_id,from_status,to_status,actor,detail) VALUES($1,$2,$3,$4,$5)', [command.id, 'PENDING', 'CLAIMED', actor, { atomic: true }]);
     await client.query('COMMIT');
@@ -177,7 +177,7 @@ const server = http.createServer(async (req, res) => {
       const input = await body(req);
       if (!devicePairingToken || !tokenMatches(input.pairingToken, devicePairingToken)) return send(res, 401, { ok: false, error: 'PAIRING_REQUIRED' });
       if (!pool) return send(res, 503, { ok: false, error: 'DATABASE_UNCONFIGURED' });
-      if (typeof input.deviceId !== 'string' || !DEVICE_ID_PATTERN.test(input.deviceId) || typeof input.publicKeyPem !== 'string' || !/^-----BEGIN PUBLIC KEY-----[\s\S]+-----END PUBLIC KEY-----$/.test(input.publicKeyPem)) return send(res, 400, { ok: false, error: 'INVALID_DEVICE_IDENTITY' });
+      if (typeof input.deviceId !== 'string' || !DEVICE_ID_PATTERN.test(input.deviceId) || typeof input.publicKeyPem !== 'string' || !/^-----BEGIN PUBLIC KEY-----[\s\S]+-----END PUBLIC KEY-----\s*$/.test(input.publicKeyPem)) return send(res, 400, { ok: false, error: 'INVALID_DEVICE_IDENTITY' });
       await pool.query('INSERT INTO devices(id,public_key_pem) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET public_key_pem=EXCLUDED.public_key_pem', [input.deviceId, input.publicKeyPem]);
       return send(res, 201, { ok: true, deviceId: input.deviceId });
     }
