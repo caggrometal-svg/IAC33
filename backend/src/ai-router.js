@@ -60,7 +60,7 @@ const providers = {
   animica: {
     key: null,
     async call(messages, timeoutMs) {
-      return callOpenAiCompatible('https://animica.dev/v1/chat/completions', process.env.ANIMICA_API_KEY || 'iac33-community', process.env.ANIMICA_MODEL || 'animica-chat-small', messages, timeoutMs);
+      return callOpenAiCompatible('https://animica.dev/v1/chat/completions', null, process.env.ANIMICA_MODEL || 'animica-chat-small', messages, timeoutMs);
     }
   }
 };
