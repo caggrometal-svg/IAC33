@@ -43,6 +43,9 @@ class RemoteControlEngine(
         val pending = pendingOta.get() ?: return@withContext OperationResult.Success("NO_PENDING_OTA")
         if (!identity.enrolled) return@withContext OperationResult.Failure(OperationError.AUTH, "DEVICE_NOT_ENROLLED")
         try {
+            if (BuildConfig.VERSION_NAME != pending.appVersion) {
+                return@withContext OperationResult.Failure(OperationError.PROVIDER, "OTA_VERSION_MISMATCH:${BuildConfig.VERSION_NAME}:${pending.appVersion}")
+            }
             val body = JSONObject()
                 .put("detail", JSONObject()
                     .put("message", "OTA_HEALTH_CHECK_PASS")
@@ -51,9 +54,6 @@ class RemoteControlEngine(
                     .put("expectedAppVersion", pending.appVersion)
                     .put("idempotencyKey", pending.idempotencyKey))
                 .toString()
-            if (BuildConfig.VERSION_NAME != pending.appVersion) {
-                return@withContext OperationResult.Failure(OperationError.PROVIDER, "OTA_VERSION_MISMATCH:${BuildConfig.VERSION_NAME}:${pending.appVersion}")
-            }
             val ack = request("/v1/device/commands/${pending.commandId}/succeed", body, signed = true)
             if (ack.first !in 200..299) return@withContext OperationResult.Failure(OperationError.PROVIDER, ack.second.optString("error", "OTA ACK failed"))
             pendingOta.clear()
@@ -104,7 +104,9 @@ class RemoteControlEngine(
             if (command.type.equals("OTA_INSTALL", ignoreCase = true)) {
                 val result = runCatching {
                     otaExecutor.execute(command.payload) { manifest ->
-                        pendingOta.save(command.id, command.idempotencyKey, manifest.releaseId, manifest.appVersion)
+                        check(pendingOta.save(command.id, command.idempotencyKey, manifest.releaseId, manifest.appVersion)) {
+                            "OTA pending state could not be persisted"
+                        }
                     }
                 }.getOrElse { error ->
                     return@withContext runCatching {
