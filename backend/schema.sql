@@ -1,3 +1,11 @@
+CREATE TABLE IF NOT EXISTS devices (
+  id TEXT PRIMARY KEY,
+  public_key_pem TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS devices_last_seen_idx ON devices(last_seen_at);
+
 CREATE TABLE IF NOT EXISTS commands (
   id TEXT PRIMARY KEY,
   type TEXT NOT NULL,
@@ -5,14 +13,13 @@ CREATE TABLE IF NOT EXISTS commands (
   idempotency_key TEXT NOT NULL UNIQUE,
   status TEXT NOT NULL CHECK (status IN ('PENDING','CLAIMED','EXECUTING','SUCCEEDED','FAILED','EXPIRED','REJECTED')),
   expires_at TIMESTAMPTZ NOT NULL,
-  target_device_id TEXT,
+  target_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
   claimed_by TEXT,
   claimed_at TIMESTAMPTZ,
   executed_at TIMESTAMPTZ,
   result JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT commands_target_device_fk FOREIGN KEY (target_device_id) REFERENCES devices(id) ON DELETE SET NULL
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS commands_pending_idx ON commands(status, created_at);
@@ -30,14 +37,6 @@ CREATE TABLE IF NOT EXISTS command_audit (
 );
 
 CREATE INDEX IF NOT EXISTS command_audit_command_idx ON command_audit(command_id, created_at);
-
-CREATE TABLE IF NOT EXISTS devices (
-  id TEXT PRIMARY KEY,
-  public_key_pem TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  last_seen_at TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS devices_last_seen_idx ON devices(last_seen_at);
 
 CREATE TABLE IF NOT EXISTS device_nonces (
   device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
