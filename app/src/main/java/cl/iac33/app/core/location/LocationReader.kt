@@ -3,7 +3,6 @@ package cl.iac33.app.core.location
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
-import android.location.Location
 import android.location.LocationManager
 import androidx.core.content.ContextCompat
 
@@ -26,13 +25,20 @@ class LocationReader(context: Context) {
         val candidates = buildList {
             for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
                 try {
-                    if (manager.isProviderEnabled(provider)) manager.getLastKnownLocation(provider)?.let(::add)
+                    if (manager.isProviderEnabled(provider)) {
+                        manager.getLastKnownLocation(provider)?.let(::add)
+                    }
                 } catch (_: SecurityException) {
                     return null
                 }
             }
         }
         val best = candidates.maxByOrNull { it.time } ?: return null
-        return LocationSnapshot(best.latitude, best.longitude, best.accuracy, best.provider)
+        return LocationSnapshot(
+            best.latitude,
+            best.longitude,
+            best.accuracy,
+            best.provider ?: "unknown"
+        )
     }
 }
