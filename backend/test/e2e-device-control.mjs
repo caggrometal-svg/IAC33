@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import pg from 'pg';
 
 const baseUrl = (process.env.E2E_BASE_URL || '').replace(/\/$/, '');
 const pairingToken = process.env.DEVICE_PAIRING_TOKEN || '';
 const controlToken = process.env.CONTROL_TOKEN || '';
+const databaseUrl = process.env.DATABASE_URL || '';
 
 for (const [name, value] of Object.entries({ E2E_BASE_URL: baseUrl, DEVICE_PAIRING_TOKEN: pairingToken, CONTROL_TOKEN: controlToken })) {
   assert.ok(value, `${name} is required`);
@@ -76,6 +78,28 @@ const succeeded = await request(succeedPath, signed(succeedPath, { detail: { mes
 assert.equal(succeeded.status, 200, JSON.stringify(succeeded.json));
 assert.equal(succeeded.json.command.status, 'SUCCEEDED');
 
+if (databaseUrl) {
+  const db = new pg.Pool({ connectionString: databaseUrl, ...(databaseUrl.includes('localhost') || databaseUrl.includes('127.0.0.1') ? {} : { ssl: { rejectUnauthorized: false } }) });
+  try {
+    const commandRow = await db.query('SELECT status, result->>\'message\' AS message FROM commands WHERE id=$1', [commandId]);
+    assert.equal(commandRow.rowCount, 1);
+    assert.equal(commandRow.rows[0].status, 'SUCCEEDED');
+    assert.equal(commandRow.rows[0].message, 'ACK:PING');
+    const audit = await db.query('SELECT from_status,to_status FROM command_audit WHERE command_id=$1 ORDER BY id', [commandId]);
+    assert.deepEqual(audit.rows.map((row) => [row.from_status, row.to_status]), [
+      [null, 'PENDING'],
+      ['PENDING', 'CLAIMED'],
+      ['CLAIMED', 'EXECUTING'],
+      ['EXECUTING', 'SUCCEEDED']
+    ]);
+    const deviceRow = await db.query('SELECT last_seen_at FROM devices WHERE id=$1', [deviceId]);
+    assert.equal(deviceRow.rowCount, 1);
+    assert.ok(deviceRow.rows[0].last_seen_at);
+  } finally {
+    await db.end();
+  }
+}
+
 const replayNonce = crypto.randomUUID().replaceAll('-', '');
 const replayPayload = signed('/v1/device/commands/claim-next', {}, replayNonce);
 const firstReplayProbe = await request('/v1/device/commands/claim-next', replayPayload);
@@ -95,6 +119,7 @@ console.log(JSON.stringify({
   deviceId,
   commandId,
   lifecycle: ['ENROLLED', 'PENDING', 'CLAIMED', 'EXECUTING', 'SUCCEEDED'],
+  databaseEvidence: databaseUrl ? 'PASS' : 'SKIPPED',
   replayProtection: 'PASS',
   invalidSignature: 'PASS'
 }, null, 2));
