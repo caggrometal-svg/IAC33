@@ -9,13 +9,14 @@ const MAX_AI_MESSAGES = 64;
 const MAX_AI_MESSAGE_CHARS = 32_000;
 const AI_MIN_TIMEOUT_MS = 1_000;
 const AI_MAX_TIMEOUT_MS = 45_000;
+const READY_TIMEOUT_MS = 2_000;
 const DEVICE_ID_PATTERN = /^[A-Za-z0-9._:-]{16,128}$/;
 const port = Number(process.env.PORT || 3000);
 const controlToken = process.env.CONTROL_TOKEN || '';
 const devicePairingToken = process.env.DEVICE_PAIRING_TOKEN || '';
 const databaseUrl = process.env.DATABASE_URL || '';
 const databaseNeedsSsl = databaseUrl && !/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(databaseUrl);
-const pool = databaseUrl ? new Pool({ connectionString: databaseUrl, ...(databaseNeedsSsl ? { ssl: { rejectUnauthorized: false } } : {}), connectionTimeoutMillis: 5000, idleTimeoutMillis: 10000, max: 5 }) : null;
+const pool = databaseUrl ? new Pool({ connectionString: databaseUrl, ...(databaseNeedsSsl ? { ssl: { rejectUnauthorized: false } } : {}), connectionTimeoutMillis: READY_TIMEOUT_MS, idleTimeoutMillis: 10000, max: 5 }) : null;
 const aiWindow = new Map();
 
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('INVALID_PORT');
@@ -155,14 +156,21 @@ async function transition(id, target, actor, detail = {}, deviceId = null) {
   finally { client.release(); }
 }
 
+async function readinessProbe() {
+  if (!pool) return false;
+  const timeout = new Promise((resolve) => setTimeout(() => resolve(false), READY_TIMEOUT_MS));
+  const query = pool.query({ text: 'SELECT 1', statement_timeout: READY_TIMEOUT_MS }).then(() => true).catch(() => false);
+  return Promise.race([query, timeout]);
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const path = new URL(req.url, 'http://localhost').pathname;
     if (req.method === 'GET' && path === '/health') return send(res, 200, { ok: true, service: 'iac33-backend', status: 'alive' });
     if (req.method === 'GET' && path === '/ready') {
       if (!pool) return send(res, 503, { ok: false, service: 'iac33-backend', status: 'not_ready', database: false });
-      try { await pool.query({ text: 'SELECT 1', statement_timeout: 4000 }); return send(res, 200, { ok: true, service: 'iac33-backend', status: 'ready', database: true, deviceAuth: Boolean(devicePairingToken) }); }
-      catch { return send(res, 503, { ok: false, service: 'iac33-backend', status: 'not_ready', database: false }); }
+      if (await readinessProbe()) return send(res, 200, { ok: true, service: 'iac33-backend', status: 'ready', database: true, deviceAuth: Boolean(devicePairingToken) });
+      return send(res, 503, { ok: false, service: 'iac33-backend', status: 'not_ready', database: false });
     }
     if (req.method === 'POST' && path === '/v1/ai/generate') {
       if (!aiAllowed(req)) return send(res, 429, { ok: false, error: 'AI_RATE_LIMITED' });
