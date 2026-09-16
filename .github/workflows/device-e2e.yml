@@ -1,0 +1,29 @@
+name: IAC33 Device Control E2E
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: [IAC33 Android CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run device control E2E
+        env:
+          E2E_BASE_URL: ${{ secrets.IAC33_E2E_BASE_URL }}
+          DEVICE_PAIRING_TOKEN: ${{ secrets.IAC33_DEVICE_PAIRING_TOKEN }}
+          CONTROL_TOKEN: ${{ secrets.IAC33_CONTROL_TOKEN }}
+        run: node backend/test/e2e-device-control.mjs
