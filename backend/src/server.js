@@ -9,7 +9,7 @@ const controlToken = process.env.CONTROL_TOKEN || '';
 const devicePairingToken = process.env.DEVICE_PAIRING_TOKEN || '';
 const databaseUrl = process.env.DATABASE_URL || '';
 const databaseNeedsSsl = databaseUrl && !/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(databaseUrl);
-const pool = databaseUrl ? new Pool({ connectionString: databaseUrl, ...(databaseNeedsSsl ? { ssl: { rejectUnauthorized: false } } : {}) }) : null;
+const pool = databaseUrl ? new Pool({ connectionString: databaseUrl, ...(databaseNeedsSsl ? { ssl: { rejectUnauthorized: false } } : {}), connectionTimeoutMillis: 5000, idleTimeoutMillis: 10000, max: 5 }) : null;
 const aiWindow = new Map();
 
 function authorized(req) {
@@ -164,7 +164,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && req.url === '/health') {
       let database = false;
       if (pool) {
-        try { await pool.query('SELECT 1'); database = true; } catch { database = false; }
+        try { await pool.query({ text: 'SELECT 1', statement_timeout: 4000 }); database = true; } catch { database = false; }
       }
       return send(res, database ? 200 : 503, { ok: database, service: 'iac33-backend', database, deviceAuth: Boolean(database && devicePairingToken) });
     }
