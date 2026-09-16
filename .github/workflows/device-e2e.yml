@@ -16,6 +16,25 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: iac33
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d iac33"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/iac33
+      CONTROL_TOKEN: ci-control-token
+      DEVICE_PAIRING_TOKEN: ci-pairing-token
+      PORT: 8787
+      E2E_BASE_URL: http://127.0.0.1:8787
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,15 +42,29 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Run device control E2E
-        env:
-          E2E_BASE_URL: ${{ secrets.IAC33_E2E_BASE_URL }}
-          DEVICE_PAIRING_TOKEN: ${{ secrets.IAC33_DEVICE_PAIRING_TOKEN }}
-          CONTROL_TOKEN: ${{ secrets.IAC33_CONTROL_TOKEN }}
+      - name: Install backend
+        working-directory: backend
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Initialize database
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/schema.sql
+      - name: Start backend
         run: |
-          test -n "$E2E_BASE_URL"
-          test -n "$DEVICE_PAIRING_TOKEN"
-          test -n "$CONTROL_TOKEN"
-          cd backend
-          npm install --ignore-scripts --no-audit --no-fund
-          node test/e2e-device-control.mjs
+          node backend/src/start.js > /tmp/iac33-backend.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl --fail --silent "$E2E_BASE_URL/ready" > /tmp/ready.json; then
+              cat /tmp/ready.json
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/iac33-backend.log
+          exit 1
+      - name: Run device control E2E
+        run: node backend/test/e2e-device-control.mjs
+      - name: Live Render smoke test
+        run: |
+          curl --fail --silent --show-error https://iac33-backend.onrender.com/health
+          curl --fail --silent --show-error https://iac33-backend.onrender.com/ready
+      - name: Backend logs on failure
+        if: failure()
+        run: cat /tmp/iac33-backend.log
