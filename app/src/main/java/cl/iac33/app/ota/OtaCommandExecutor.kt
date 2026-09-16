@@ -8,7 +8,7 @@ import java.net.URL
 
 /** Executes a remotely requested OTA after strict manifest/artifact verification. */
 class OtaCommandExecutor(private val context: Context) {
-    fun execute(payload: String): String {
+    fun execute(payload: String, beforeInstall: ((OtaManifest) -> Unit)? = null): String {
         val root = JSONObject(payload)
         val manifestJson = root.getJSONObject("manifest")
         val manifest = OtaManifest(
@@ -32,15 +32,22 @@ class OtaCommandExecutor(private val context: Context) {
         val artifact = download(manifest.artifactRef, manifest.artifactSize)
         val pipeline = OtaPipeline(BuildConfig.IAC33_OTA_PUBLIC_KEY_B64)
         pipeline.verifyAndStage(manifest, artifact).getOrThrow()
-        pipeline.markSelfTestPassed().getOrThrow()
 
         if (root.optBoolean("dryRun", false)) {
+            pipeline.markSelfTestPassed().getOrThrow()
             return "OTA_VERIFIED:${manifest.releaseId}"
         }
 
         val installer = OtaInstaller(context)
         val staged = installer.stageVerifiedArtifact(manifest, artifact, BuildConfig.IAC33_OTA_PUBLIC_KEY_B64)
-        installer.launchInstaller(staged)
+        beforeInstall?.invoke(manifest)
+        try {
+            installer.launchInstaller(staged)
+        } catch (error: Exception) {
+            beforeInstall?.let { _ -> PendingOtaStore(context).clear() }
+            pipeline.rollback()
+            throw error
+        }
         return "OTA_INSTALL_REQUESTED:${manifest.releaseId}"
     }
 
