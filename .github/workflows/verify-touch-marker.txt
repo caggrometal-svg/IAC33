@@ -1,0 +1,1 @@
+Verification trigger marker. CI workflow verify-touch runs on push to main.
