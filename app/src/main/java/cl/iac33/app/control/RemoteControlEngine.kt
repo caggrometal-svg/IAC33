@@ -1,6 +1,7 @@
 package cl.iac33.app.control
 
 import android.content.Context
+import cl.iac33.app.core.ControlEngine
 import cl.iac33.app.core.OperationError
 import cl.iac33.app.core.OperationResult
 import cl.iac33.app.core.RemoteCommand
@@ -9,19 +10,20 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.time.Instant
 import java.util.UUID
 
 class RemoteControlEngine(
     context: Context,
     private val baseUrl: String,
     private val identity: DeviceIdentity = DeviceIdentity(context)
-) {
+) : ControlEngine {
     suspend fun enroll(pairingToken: String): OperationResult<Unit> = withContext(Dispatchers.IO) {
         if (baseUrl.isBlank()) return@withContext OperationResult.Failure(OperationError.NETWORK, "Backend URL not configured")
         try {
             val json = JSONObject().put("deviceId", identity.deviceId).put("publicKeyPem", identity.publicKeyPem()).put("pairingToken", pairingToken)
             val result = request("/v1/devices/enroll", json.toString(), signed = false)
-            if (result.first !in 200..299) return@withContext OperationResult.Failure(OperationError.PROVIDER, result.second.optString("error", "Enrollment failed"))
+            if (result.first !in 200..299) return@withContext OperationResult.Failure(OperationError.AUTH, result.second.optString("error", "Enrollment failed"))
             identity.markEnrolled(true)
             OperationResult.Success(Unit)
         } catch (error: Exception) {
@@ -30,10 +32,10 @@ class RemoteControlEngine(
     }
 
     suspend fun claimNext(): OperationResult<RemoteCommand?> = withContext(Dispatchers.IO) {
-        if (!identity.enrolled) return@withContext OperationResult.Failure(OperationError.PROVIDER, "DEVICE_NOT_ENROLLED")
+        if (!identity.enrolled) return@withContext OperationResult.Failure(OperationError.AUTH, "DEVICE_NOT_ENROLLED")
         try {
             val result = request("/v1/device/commands/claim-next", "{}", signed = true)
-            if (result.first !in 200..299) return@withContext OperationResult.Failure(OperationError.PROVIDER, result.second.optString("error", "Claim failed"))
+            if (result.first !in 200..299) return@withContext OperationResult.Failure(OperationError.AUTH, result.second.optString("error", "Claim failed"))
             val command = result.second.optJSONObject("command") ?: return@withContext OperationResult.Success(null)
             OperationResult.Success(
                 RemoteCommand(
@@ -41,7 +43,7 @@ class RemoteControlEngine(
                     type = command.getString("type"),
                     payload = command.getJSONObject("payload").toString(),
                     idempotencyKey = command.getString("idempotency_key"),
-                    expiresAtMs = java.time.Instant.parse(command.getString("expires_at")).toEpochMilli()
+                    expiresAtMs = Instant.parse(command.getString("expires_at")).toEpochMilli()
                 )
             )
         } catch (error: Exception) {
@@ -49,7 +51,10 @@ class RemoteControlEngine(
         }
     }
 
+    override suspend fun submit(command: RemoteCommand): OperationResult<String> = executeAndAck(command)
+
     suspend fun executeAndAck(command: RemoteCommand): OperationResult<String> = withContext(Dispatchers.IO) {
+        if (!identity.enrolled) return@withContext OperationResult.Failure(OperationError.AUTH, "DEVICE_NOT_ENROLLED")
         try {
             val execute = request("/v1/device/commands/${command.id}/execute", "{}", signed = true)
             if (execute.first !in 200..299) return@withContext OperationResult.Failure(OperationError.PROVIDER, execute.second.optString("error", "Execute transition failed"))
@@ -58,7 +63,7 @@ class RemoteControlEngine(
             val ackBody = JSONObject().put("detail", JSONObject().put("message", result.second).put("idempotencyKey", command.idempotencyKey)).toString()
             val ack = request("/v1/device/commands/${command.id}/$target", ackBody, signed = true)
             if (ack.first !in 200..299) return@withContext OperationResult.Failure(OperationError.PROVIDER, ack.second.optString("error", "ACK failed"))
-            if (result.first) OperationResult.Success(result.second) else OperationResult.Failure(OperationError.PROVIDER, result.second)
+            if (result.first) OperationResult.Success(result.second) else OperationResult.Failure(OperationError.UNSUPPORTED, result.second)
         } catch (error: Exception) {
             OperationResult.Failure(OperationError.NETWORK, error.message ?: "Command execution failed")
         }
