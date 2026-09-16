@@ -5,15 +5,19 @@ CREATE TABLE IF NOT EXISTS commands (
   idempotency_key TEXT NOT NULL UNIQUE,
   status TEXT NOT NULL CHECK (status IN ('PENDING','CLAIMED','EXECUTING','SUCCEEDED','FAILED','EXPIRED','REJECTED')),
   expires_at TIMESTAMPTZ NOT NULL,
+  target_device_id TEXT,
+  claimed_by TEXT,
   claimed_at TIMESTAMPTZ,
   executed_at TIMESTAMPTZ,
   result JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT commands_target_device_fk FOREIGN KEY (target_device_id) REFERENCES devices(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS commands_pending_idx ON commands(status, created_at);
 CREATE INDEX IF NOT EXISTS commands_expiry_idx ON commands(expires_at);
+CREATE INDEX IF NOT EXISTS commands_target_device_idx ON commands(target_device_id, status, created_at);
 
 CREATE TABLE IF NOT EXISTS command_audit (
   id BIGSERIAL PRIMARY KEY,
