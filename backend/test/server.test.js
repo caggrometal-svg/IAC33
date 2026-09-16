@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { allowedTransitions, validCommand } from '../src/server.js';
+import { allowedTransitions, validCommand } from '../src/command-core.js';
 
 test('command lifecycle only permits declared forward transitions', () => {
   assert.equal(allowedTransitions.get('PENDING').has('CLAIMED'), true);
