@@ -7,7 +7,6 @@ plugins {
 android {
     namespace = "cl.iac33.app"
     compileSdk = 35
-
     defaultConfig {
         applicationId = "cl.iac33.app"
         minSdk = 26
@@ -17,25 +16,11 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
     }
-
-    buildTypes {
-        release { isMinifyEnabled = false }
-    }
-
-    buildFeatures {
-        compose = true
-        buildConfig = true
-    }
-
+    buildTypes { release { isMinifyEnabled = false } }
+    buildFeatures { compose = true; buildConfig = true }
     val iac33BackendUrl = providers.gradleProperty("IAC33_BACKEND_URL").orElse("")
-    defaultConfig {
-        buildConfigField("String", "IAC33_BACKEND_URL", "\"${iac33BackendUrl.get()}\"")
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
+    defaultConfig { buildConfigField("String", "IAC33_BACKEND_URL", "\"${iac33BackendUrl.get()}\"") }
+    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
 }
@@ -52,4 +37,7 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.10.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
