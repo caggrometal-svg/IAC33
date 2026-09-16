@@ -14,14 +14,13 @@ class PendingOtaStore(context: Context) {
     )
 
     @Synchronized
-    fun save(commandId: String, idempotencyKey: String, releaseId: String, appVersion: String) {
+    fun save(commandId: String, idempotencyKey: String, releaseId: String, appVersion: String): Boolean =
         prefs.edit()
             .putString("commandId", commandId)
             .putString("idempotencyKey", idempotencyKey)
             .putString("releaseId", releaseId)
             .putString("appVersion", appVersion)
-            .apply()
-    }
+            .commit()
 
     @Synchronized
     fun get(): Pending? {
@@ -33,7 +32,5 @@ class PendingOtaStore(context: Context) {
     }
 
     @Synchronized
-    fun clear() {
-        prefs.edit().clear().apply()
-    }
+    fun clear(): Boolean = prefs.edit().clear().commit()
 }
