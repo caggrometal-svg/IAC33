@@ -1,5 +1,6 @@
 package cl.iac33.app.control
 
+import cl.iac33.app.core.OperationError
 import cl.iac33.app.core.OperationResult
 
 enum class CommandState { PENDING, CLAIMED, EXECUTING, SUCCEEDED, FAILED, EXPIRED, REJECTED }
@@ -11,7 +12,9 @@ class CommandLifecycle {
 
     @Synchronized
     fun create(id: String, idempotencyKey: String): OperationResult<CommandRecord> {
-        if (id.isBlank() || idempotencyKey.isBlank()) return OperationResult.Failure(cl.iac33.app.core.OperationError("COMMAND_INVALID", "id/idempotencyKey requeridos"))
+        if (id.isBlank() || idempotencyKey.isBlank()) {
+            return OperationResult.Failure(OperationError.VALIDATION, "id/idempotencyKey requeridos")
+        }
         val existing = records[id]
         if (existing != null) return OperationResult.Success(existing)
         val record = CommandRecord(id, CommandState.PENDING, idempotencyKey)
@@ -21,8 +24,11 @@ class CommandLifecycle {
 
     @Synchronized
     fun transition(id: String, next: CommandState): OperationResult<CommandRecord> {
-        val current = records[id] ?: return OperationResult.Failure(cl.iac33.app.core.OperationError("COMMAND_NOT_FOUND", "Comando inexistente"))
-        if (!allowed(current.state, next)) return OperationResult.Failure(cl.iac33.app.core.OperationError("COMMAND_TRANSITION", "Transición no permitida"))
+        val current = records[id]
+            ?: return OperationResult.Failure(OperationError.VALIDATION, "Comando inexistente")
+        if (!allowed(current.state, next)) {
+            return OperationResult.Failure(OperationError.CONFLICT, "Transición no permitida")
+        }
         val updated = current.copy(state = next)
         records[id] = updated
         return OperationResult.Success(updated)
