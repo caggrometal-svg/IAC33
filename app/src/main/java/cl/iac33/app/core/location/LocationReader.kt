@@ -1,0 +1,38 @@
+package cl.iac33.app.core.location
+
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationManager
+import androidx.core.content.ContextCompat
+
+data class LocationSnapshot(
+    val latitude: Double,
+    val longitude: Double,
+    val accuracyMeters: Float?,
+    val provider: String
+)
+
+class LocationReader(context: Context) {
+    private val appContext = context.applicationContext
+    private val manager = appContext.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+
+    fun readLastKnown(): LocationSnapshot? {
+        val fine = ContextCompat.checkSelfPermission(appContext, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val coarse = ContextCompat.checkSelfPermission(appContext, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (!fine && !coarse) return null
+
+        val candidates = buildList {
+            for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
+                try {
+                    if (manager.isProviderEnabled(provider)) manager.getLastKnownLocation(provider)?.let(::add)
+                } catch (_: SecurityException) {
+                    return null
+                }
+            }
+        }
+        val best = candidates.maxByOrNull { it.time } ?: return null
+        return LocationSnapshot(best.latitude, best.longitude, best.accuracy, best.provider)
+    }
+}
