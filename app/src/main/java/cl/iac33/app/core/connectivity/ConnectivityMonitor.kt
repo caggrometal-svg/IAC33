@@ -35,6 +35,8 @@ class ConnectivityMonitor(context: Context) {
         listener = null
     }
 
+    fun status(): ConnectivityStatus = currentStatus()
+
     private fun publish(status: ConnectivityStatus) {
         listener?.invoke(status)
     }
