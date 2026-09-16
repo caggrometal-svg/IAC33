@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "engines": { "node": "20.x" },
-  "scripts": { "start": "node src/start.js", "test": "node --test --test-force-exit test/server.test.js" },
+  "scripts": { "start": "node src/start.js", "test": "node --test --test-force-exit test/*.test.js" },
   "dependencies": { "pg": "^8.16.3" }
 }
