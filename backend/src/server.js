@@ -69,6 +69,48 @@ async function createCommand(input) {
   } finally { client.release(); }
 }
 
+async function claimNextCommand(actor = 'worker') {
+  if (!pool) throw new Error('DATABASE_UNCONFIGURED');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query("UPDATE commands SET status='EXPIRED', updated_at=now() WHERE status='PENDING' AND expires_at <= now()");
+    const next = await client.query(
+      `SELECT id,type,payload,idempotency_key,expires_at
+       FROM commands
+       WHERE status='PENDING' AND expires_at > now()
+       ORDER BY created_at ASC
+       FOR UPDATE SKIP LOCKED
+       LIMIT 1`
+    );
+    if (!next.rowCount) {
+      await client.query('COMMIT');
+      return null;
+    }
+    const command = next.rows[0];
+    const updated = await client.query(
+      `UPDATE commands
+       SET status='CLAIMED', claimed_at=now(), updated_at=now()
+       WHERE id=$1 AND status='PENDING'
+       RETURNING id,type,payload,idempotency_key,expires_at,status,claimed_at`,
+      [command.id]
+    );
+    if (!updated.rowCount) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    await client.query(
+      'INSERT INTO command_audit(command_id,from_status,to_status,actor,detail) VALUES($1,$2,$3,$4,$5)',
+      [command.id, 'PENDING', 'CLAIMED', actor, { atomic: true }]
+    );
+    await client.query('COMMIT');
+    return updated.rows[0];
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally { client.release(); }
+}
+
 async function transition(id, target, actor, detail = {}) {
   if (!pool) throw new Error('DATABASE_UNCONFIGURED');
   const client = await pool.connect();
@@ -110,6 +152,12 @@ const server = http.createServer(async (req, res) => {
       const input = await body(req);
       if (!validCommand(input)) return send(res, 400, { ok: false, error: 'INVALID_COMMAND' });
       return send(res, 201, { ok: true, command: await createCommand(input) });
+    }
+
+    if (req.method === 'POST' && req.url === '/v1/commands/claim-next') {
+      const input = await body(req);
+      const command = await claimNextCommand(typeof input.actor === 'string' && input.actor.trim() ? input.actor.trim() : 'worker');
+      return send(res, 200, { ok: true, command });
     }
 
     const match = req.url.match(/^\/v1\/commands\/([^/]+)\/(claim|execute|succeed|fail)$/);
