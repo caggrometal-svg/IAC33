@@ -19,7 +19,11 @@ android {
     buildTypes { release { isMinifyEnabled = false } }
     buildFeatures { compose = true; buildConfig = true }
     val iac33BackendUrl = providers.gradleProperty("IAC33_BACKEND_URL").orElse("https://iac33-backend.onrender.com")
-    defaultConfig { buildConfigField("String", "IAC33_BACKEND_URL", "\"${iac33BackendUrl.get()}\"") }
+    val otaPublicKey = providers.gradleProperty("IAC33_OTA_PUBLIC_KEY_B64").orElse("")
+    defaultConfig {
+        buildConfigField("String", "IAC33_BACKEND_URL", "\"${iac33BackendUrl.get()}\"")
+        buildConfigField("String", "IAC33_OTA_PUBLIC_KEY_B64", "\"${otaPublicKey.get()}\"")
+    }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
