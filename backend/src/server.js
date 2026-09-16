@@ -160,7 +160,13 @@ async function transition(id, target, actor, detail = {}) {
 
 const server = http.createServer(async (req, res) => {
   try {
-    if (req.method === 'GET' && req.url === '/health') return send(res, 200, { ok: true, service: 'iac33-backend', database: Boolean(pool), deviceAuth: Boolean(pool && devicePairingToken) });
+    if (req.method === 'GET' && req.url === '/health') {
+      let database = false;
+      if (pool) {
+        try { await pool.query('SELECT 1'); database = true; } catch { database = false; }
+      }
+      return send(res, database ? 200 : 503, { ok: database, service: 'iac33-backend', database, deviceAuth: Boolean(database && devicePairingToken) });
+    }
 
     if (req.method === 'POST' && req.url === '/v1/ai/generate') {
       if (!aiAllowed(req)) return send(res, 429, { ok: false, error: 'AI_RATE_LIMITED' });
