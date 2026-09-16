@@ -1,17 +1,12 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { Pool } from 'pg';
+import { allowedTransitions, validCommand } from './command-core.js';
 
 const port = Number(process.env.PORT || 3000);
 const controlToken = process.env.CONTROL_TOKEN || '';
 const databaseUrl = process.env.DATABASE_URL || '';
 const pool = databaseUrl ? new Pool({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false } }) : null;
-
-const allowedTransitions = new Map([
-  ['PENDING', new Set(['CLAIMED', 'EXPIRED', 'REJECTED'])],
-  ['CLAIMED', new Set(['EXECUTING', 'FAILED', 'EXPIRED'])],
-  ['EXECUTING', new Set(['SUCCEEDED', 'FAILED'])]
-]);
 
 function authorized(req) {
   if (!controlToken) return false;
@@ -32,14 +27,6 @@ async function body(req) {
   for await (const chunk of req) chunks.push(chunk);
   if (!chunks.length) return {};
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-}
-
-function validCommand(input) {
-  return input && typeof input.id === 'string' && input.id.length > 0 && input.id.length <= 128 &&
-    typeof input.type === 'string' && /^[A-Za-z0-9._:-]{1,64}$/.test(input.type) &&
-    input.payload && typeof input.payload === 'object' &&
-    typeof input.idempotencyKey === 'string' && /^[A-Za-z0-9._:-]{8,128}$/.test(input.idempotencyKey) &&
-    Number.isFinite(Date.parse(input.expiresAt));
 }
 
 async function createCommand(input) {
@@ -108,6 +95,4 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-if (process.env.RUN_SERVER === '1') server.listen(port, () => console.log(`IAC33 backend listening on ${port}`));
-
-export { allowedTransitions, validCommand };
+export { server, allowedTransitions, validCommand };
