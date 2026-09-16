@@ -26,8 +26,8 @@ object OtaVerifier {
     }.getOrDefault(false)
 
     fun verifyArtifact(bytes: ByteArray, manifest: OtaManifest, publicKeyBase64: String): Boolean =
-        verifySize(bytes, manifest.artifactSize) &&
+        manifest.isContractValid() &&
+            verifySize(bytes, manifest.artifactSize) &&
             verifyDigest(bytes, manifest.artifactSha256) &&
-            manifest.algorithm == "SHA256withECDSA" &&
             verifySignature(bytes, manifest.signatureBase64, publicKeyBase64)
 }
