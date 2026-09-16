@@ -2,25 +2,13 @@ const providers = {
   openrouter: {
     key: 'OPENROUTER_API_KEY',
     async call(messages, timeoutMs) {
-      return callOpenAiCompatible(
-        'https://openrouter.ai/api/v1/chat/completions',
-        process.env.OPENROUTER_API_KEY,
-        process.env.OPENROUTER_MODEL || 'openrouter/free',
-        messages,
-        timeoutMs
-      );
+      return callOpenAiCompatible('https://openrouter.ai/api/v1/chat/completions', process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_MODEL || 'openrouter/free', messages, timeoutMs);
     }
   },
   groq: {
     key: 'GROQ_API_KEY',
     async call(messages, timeoutMs) {
-      return callOpenAiCompatible(
-        'https://api.groq.com/openai/v1/chat/completions',
-        process.env.GROQ_API_KEY,
-        process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
-        messages,
-        timeoutMs
-      );
+      return callOpenAiCompatible('https://api.groq.com/openai/v1/chat/completions', process.env.GROQ_API_KEY, process.env.GROQ_MODEL || 'openai/gpt-oss-120b', messages, timeoutMs);
     }
   },
   gemini: {
@@ -30,15 +18,9 @@ const providers = {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const contents = messages.map((m) => ({
-          role: m.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: m.content }]
-        }));
+        const contents = messages.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(process.env.GEMINI_API_KEY)}`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ contents }),
-          signal: controller.signal
+          method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ contents }), signal: controller.signal
         });
         const json = await response.json().catch(() => ({}));
         if (!response.ok) throw providerError(response.status, json?.error?.message || 'Gemini request failed');
@@ -58,13 +40,8 @@ const providers = {
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(account)}/ai/run/${encodeURIComponent(model)}`, {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}`,
-            'content-type': 'application/json'
-          },
-          body: JSON.stringify({ messages }),
-          signal: controller.signal
+          method: 'POST', headers: { authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ messages }), signal: controller.signal
         });
         const json = await response.json().catch(() => ({}));
         if (!response.ok) throw providerError(response.status, json?.errors?.[0]?.message || 'Cloudflare request failed');
@@ -72,6 +49,18 @@ const providers = {
         if (!text) throw providerError(502, 'Cloudflare returned empty response');
         return { text, model };
       } finally { clearTimeout(timer); }
+    }
+  },
+  freeinference: {
+    key: 'FREEINFERENCE_API_KEY',
+    async call(messages, timeoutMs) {
+      return callOpenAiCompatible('https://freeinference.org/v1/chat/completions', process.env.FREEINFERENCE_API_KEY, process.env.FREEINFERENCE_MODEL || 'glm-5.1', messages, timeoutMs);
+    }
+  },
+  animica: {
+    key: null,
+    async call(messages, timeoutMs) {
+      return callOpenAiCompatible('https://animica.dev/v1/chat/completions', process.env.ANIMICA_API_KEY || 'iac33-community', process.env.ANIMICA_MODEL || 'animica-chat-small', messages, timeoutMs);
     }
   }
 };
@@ -86,12 +75,9 @@ async function callOpenAiCompatible(url, key, model, messages, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ model, messages }),
-      signal: controller.signal
-    });
+    const headers = { 'content-type': 'application/json' };
+    if (key) headers.authorization = `Bearer ${key}`;
+    const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ model, messages }), signal: controller.signal });
     const json = await response.json().catch(() => ({}));
     if (!response.ok) throw providerError(response.status, json?.error?.message || 'Provider request failed');
     const text = json?.choices?.[0]?.message?.content || '';
@@ -101,12 +87,11 @@ async function callOpenAiCompatible(url, key, model, messages, timeoutMs) {
 }
 
 export async function generateWithFreePool({ messages, timeoutMs = 30000 }) {
-  const order = (process.env.AI_PROVIDER_ORDER || 'openrouter,groq,gemini,cloudflare')
-    .split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const order = (process.env.AI_PROVIDER_ORDER || 'openrouter,freeinference,animica,groq,gemini,cloudflare').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
   const diagnostics = [];
   for (const id of order) {
     const provider = providers[id];
-    if (!provider || !process.env[provider.key]) {
+    if (!provider || (provider.key && !process.env[provider.key])) {
       diagnostics.push({ provider: id, state: 'NOT_CONFIGURED' });
       continue;
     }
