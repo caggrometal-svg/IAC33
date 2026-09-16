@@ -26,3 +26,11 @@ CREATE TABLE IF NOT EXISTS command_audit (
 );
 
 CREATE INDEX IF NOT EXISTS command_audit_command_idx ON command_audit(command_id, created_at);
+
+CREATE TABLE IF NOT EXISTS devices (
+  id TEXT PRIMARY KEY,
+  public_key_pem TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS devices_last_seen_idx ON devices(last_seen_at);
