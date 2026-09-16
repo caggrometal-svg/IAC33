@@ -27,4 +27,4 @@ jobs:
           cache-dependency-path: backend/package.json
       - run: npm install --ignore-scripts
       - name: Run backend tests
-        run: npm test -- --test-reporter=spec
+        run: node --test --test-force-exit --test-reporter=spec test/server.test.js
