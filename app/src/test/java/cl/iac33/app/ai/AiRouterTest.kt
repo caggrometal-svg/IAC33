@@ -41,15 +41,26 @@ class AiRouterTest {
         assertEquals("second", (result as OperationResult.Success).value.provider)
     }
 
+    @Test
+    fun fails_over_after_provider_exception() = runBlocking {
+        val first = FakeProvider("first", available = true, throwOnGenerate = true)
+        val second = FakeProvider("second", available = true)
+        val result = AiRouter(listOf(first, second)).generate(request)
+        assertTrue(result is OperationResult.Success)
+        assertEquals("second", (result as OperationResult.Success).value.provider)
+    }
+
     private class FakeProvider(
         override val id: String,
         private val available: Boolean,
-        private val fail: Boolean = false
+        private val fail: Boolean = false,
+        private val throwOnGenerate: Boolean = false
     ) : AiProvider {
         override val model: String = "test-model"
         override fun isAvailable(): Boolean = available
 
         override suspend fun generate(request: AiRequest): OperationResult<AiResult> {
+            if (throwOnGenerate) error("simulated provider crash")
             if (fail) return OperationResult.Failure(OperationError.PROVIDER, "test failure")
             return OperationResult.Success(
                 AiResult(id, model, "ok", 0L)
