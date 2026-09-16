@@ -25,9 +25,13 @@ async function request(path, { body = {}, headers = {} } = {}) {
 
 const health = await fetch(`${baseUrl}/health`).then(async (r) => ({ status: r.status, json: await r.json() }));
 assert.equal(health.status, 200);
-assert.equal(health.json.ok, true);
-assert.equal(health.json.database, true);
-assert.equal(health.json.deviceAuth, true);
+assert.deepEqual(health.json, { ok: true, service: 'iac33-backend', status: 'alive' });
+
+const ready = await fetch(`${baseUrl}/ready`).then(async (r) => ({ status: r.status, json: await r.json() }));
+assert.equal(ready.status, 200);
+assert.equal(ready.json.ok, true);
+assert.equal(ready.json.database, true);
+assert.equal(ready.json.deviceAuth, true);
 
 const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
 const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' });
@@ -119,6 +123,8 @@ console.log(JSON.stringify({
   deviceId,
   commandId,
   lifecycle: ['ENROLLED', 'PENDING', 'CLAIMED', 'EXECUTING', 'SUCCEEDED'],
+  health: 'PASS',
+  readiness: 'PASS',
   databaseEvidence: databaseUrl ? 'PASS' : 'SKIPPED',
   replayProtection: 'PASS',
   invalidSignature: 'PASS'
