@@ -36,7 +36,7 @@ jobs:
           node-version: '20'
       - name: Install backend dependencies
         working-directory: backend
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: npm install --ignore-scripts --no-audit --no-fund
       - name: Apply database schema
         env:
           PGPASSWORD: iac33
