@@ -34,7 +34,6 @@ class OtaCommandExecutor(private val context: Context) {
         pipeline.verifyAndStage(manifest, artifact).getOrThrow()
         pipeline.markSelfTestPassed().getOrThrow()
 
-        // dryRun is used by automated E2E tests; production commands omit it.
         if (root.optBoolean("dryRun", false)) {
             return "OTA_VERIFIED:${manifest.releaseId}"
         }
@@ -47,7 +46,7 @@ class OtaCommandExecutor(private val context: Context) {
 
     private fun download(ref: String, expectedSize: Long): ByteArray {
         val url = URL(ref)
-        require(url.protocol == "https" || url.protocol == "http") { "Unsupported OTA artifact protocol" }
+        require(url.protocol.equals("https", ignoreCase = true)) { "OTA artifact must use HTTPS" }
         val connection = (url.openConnection() as HttpURLConnection).apply {
             connectTimeout = 15_000
             readTimeout = 60_000
