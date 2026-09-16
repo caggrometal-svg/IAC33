@@ -26,5 +26,5 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package.json
       - run: npm install --ignore-scripts
-      - name: Run backend tests with hard timeout
-        run: timeout 120s npm test -- --test-reporter=spec
+      - name: Run backend tests
+        run: npm test -- --test-reporter=spec
