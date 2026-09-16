@@ -2,11 +2,13 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { Pool } from 'pg';
 import { allowedTransitions, validCommand } from './command-core.js';
+import { generateWithFreePool } from './ai-router.js';
 
 const port = Number(process.env.PORT || 3000);
 const controlToken = process.env.CONTROL_TOKEN || '';
 const databaseUrl = process.env.DATABASE_URL || '';
 const pool = databaseUrl ? new Pool({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false } }) : null;
+const aiWindow = new Map();
 
 function authorized(req) {
   if (!controlToken) return false;
@@ -20,6 +22,21 @@ function send(res, status, body) {
   const data = JSON.stringify(body);
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   res.end(data);
+}
+
+function clientKey(req) {
+  return String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown').split(',')[0].trim();
+}
+
+function aiAllowed(req) {
+  const key = clientKey(req);
+  const now = Date.now();
+  const previous = aiWindow.get(key) || [];
+  const recent = previous.filter((time) => now - time < 60_000);
+  if (recent.length >= Number(process.env.AI_REQUESTS_PER_MINUTE || 20)) return false;
+  recent.push(now);
+  aiWindow.set(key, recent);
+  return true;
 }
 
 async function body(req) {
@@ -72,6 +89,21 @@ async function transition(id, target, actor, detail = {}) {
 const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'GET' && req.url === '/health') return send(res, 200, { ok: true, service: 'iac33-backend', database: Boolean(pool) });
+
+    if (req.method === 'POST' && req.url === '/v1/ai/generate') {
+      if (!aiAllowed(req)) return send(res, 429, { ok: false, error: 'AI_RATE_LIMITED' });
+      const input = await body(req);
+      if (!Array.isArray(input.messages) || !input.messages.length || input.messages.some((m) => !m || typeof m.content !== 'string' || !m.content.trim())) {
+        return send(res, 400, { ok: false, error: 'INVALID_AI_REQUEST' });
+      }
+      try {
+        const result = await generateWithFreePool({ messages: input.messages, timeoutMs: Math.min(Number(input.timeoutMs || 30000), 45000) });
+        return send(res, 200, { ok: true, provider: result.provider, model: result.model, text: result.text, diagnostics: result.diagnostics });
+      } catch (error) {
+        return send(res, 503, { ok: false, error: error.message || 'AI_PROVIDERS_UNAVAILABLE', diagnostics: error.diagnostics || [] });
+      }
+    }
+
     if (!authorized(req)) return send(res, 401, { ok: false, error: 'UNAUTHORIZED' });
 
     if (req.method === 'POST' && req.url === '/v1/commands') {
