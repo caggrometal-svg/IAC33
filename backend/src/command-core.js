@@ -6,6 +6,7 @@ const allowedTransitions = new Map([
 
 const MAX_COMMAND_PAYLOAD_BYTES = 128 * 1024;
 const MAX_COMMAND_TTL_MS = 24 * 60 * 60 * 1000;
+const DEVICE_ID_PATTERN = /^[A-Za-z0-9._:-]{16,128}$/;
 
 function validCommand(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
@@ -13,6 +14,7 @@ function validCommand(input) {
   if (typeof input.type !== 'string' || !/^[A-Za-z0-9._:-]{1,64}$/.test(input.type)) return false;
   if (!input.payload || typeof input.payload !== 'object' || Array.isArray(input.payload)) return false;
   if (typeof input.idempotencyKey !== 'string' || !/^[A-Za-z0-9._:-]{8,128}$/.test(input.idempotencyKey)) return false;
+  if (input.targetDeviceId !== undefined && (typeof input.targetDeviceId !== 'string' || !DEVICE_ID_PATTERN.test(input.targetDeviceId))) return false;
   const expiresAt = Date.parse(input.expiresAt);
   if (!Number.isFinite(expiresAt)) return false;
   const now = Date.now();
@@ -25,4 +27,4 @@ function validCommand(input) {
   return true;
 }
 
-export { allowedTransitions, validCommand };
+export { allowedTransitions, validCommand, DEVICE_ID_PATTERN };
