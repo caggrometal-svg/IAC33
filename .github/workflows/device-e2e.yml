@@ -28,12 +28,10 @@ jobs:
           E2E_BASE_URL: ${{ secrets.IAC33_E2E_BASE_URL }}
           DEVICE_PAIRING_TOKEN: ${{ secrets.IAC33_DEVICE_PAIRING_TOKEN }}
           CONTROL_TOKEN: ${{ secrets.IAC33_CONTROL_TOKEN }}
-          DATABASE_URL: ${{ secrets.IAC33_DATABASE_URL }}
         run: |
           test -n "$E2E_BASE_URL"
           test -n "$DEVICE_PAIRING_TOKEN"
           test -n "$CONTROL_TOKEN"
-          test -n "$DATABASE_URL"
           cd backend
           npm install --ignore-scripts --no-audit --no-fund
           node test/e2e-device-control.mjs
