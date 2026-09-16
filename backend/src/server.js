@@ -108,6 +108,6 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-if (process.env.NODE_ENV !== 'test') server.listen(port, () => console.log(`IAC33 backend listening on ${port}`));
+if (process.env.RUN_SERVER === '1') server.listen(port, () => console.log(`IAC33 backend listening on ${port}`));
 
 export { allowedTransitions, validCommand };
