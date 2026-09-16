@@ -15,19 +15,7 @@ const providers = {
     key: 'GEMINI_API_KEY',
     async call(messages, timeoutMs) {
       const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-      try {
-        const contents = messages.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(process.env.GEMINI_API_KEY)}`, {
-          method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ contents }), signal: controller.signal
-        });
-        const json = await response.json().catch(() => ({}));
-        if (!response.ok) throw providerError(response.status, json?.error?.message || 'Gemini request failed');
-        const text = json?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '';
-        if (!text) throw providerError(502, 'Gemini returned empty response');
-        return { text, model };
-      } finally { clearTimeout(timer); }
+      return callGemini(messages, timeoutMs, model);
     }
   },
   cloudflare: {
@@ -71,6 +59,26 @@ function providerError(status, message) {
   return error;
 }
 
+async function callGemini(messages, timeoutMs, model) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const contents = messages.filter((m) => m.role !== 'system').map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
+    const system = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n');
+    const generationConfig = {};
+    const payload = { contents };
+    if (system) payload.systemInstruction = { parts: [{ text: system }] };
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(process.env.GEMINI_API_KEY)}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload), signal: controller.signal
+    });
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok) throw providerError(response.status, json?.error?.message || 'Gemini request failed');
+    const text = json?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '';
+    if (!text) throw providerError(502, 'Gemini returned empty response');
+    return { text, model };
+  } finally { clearTimeout(timer); }
+}
+
 async function callOpenAiCompatible(url, key, model, messages, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -87,7 +95,8 @@ async function callOpenAiCompatible(url, key, model, messages, timeoutMs) {
 }
 
 export async function generateWithFreePool({ messages, timeoutMs = 30000 }) {
-  const order = (process.env.AI_PROVIDER_ORDER || 'openrouter,freeinference,animica,groq,gemini,cloudflare').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const configuredOrder = (process.env.AI_PROVIDER_ORDER || 'openrouter,freeinference,animica,groq,gemini,cloudflare').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const order = [...new Set(configuredOrder)];
   const diagnostics = [];
   for (const id of order) {
     const provider = providers[id];
@@ -101,7 +110,7 @@ export async function generateWithFreePool({ messages, timeoutMs = 30000 }) {
       diagnostics.push({ provider: id, state: 'RESPONDING', latencyMs: Date.now() - started });
       return { ...result, provider: id, diagnostics };
     } catch (error) {
-      diagnostics.push({ provider: id, state: error?.status === 429 ? 'RATE_LIMITED' : 'FAILED', status: error?.status || 500, latencyMs: Date.now() - started });
+      diagnostics.push({ provider: id, state: error?.name === 'AbortError' ? 'TIMEOUT' : error?.status === 429 ? 'RATE_LIMITED' : 'FAILED', status: error?.status || 500, latencyMs: Date.now() - started });
     }
   }
   const error = new Error('AI_PROVIDERS_UNAVAILABLE');
