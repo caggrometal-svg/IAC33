@@ -1,0 +1,3 @@
+<resources>
+    <style name="Theme.IAC33" parent="android:style/Theme.Material.Light.NoActionBar" />
+</resources>
