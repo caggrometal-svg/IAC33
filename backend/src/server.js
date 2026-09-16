@@ -7,6 +7,8 @@ import { generateWithFreePool } from './ai-router.js';
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_AI_MESSAGES = 64;
 const MAX_AI_MESSAGE_CHARS = 32_000;
+const AI_MIN_TIMEOUT_MS = 1_000;
+const AI_MAX_TIMEOUT_MS = 45_000;
 const port = Number(process.env.PORT || 3000);
 const controlToken = process.env.CONTROL_TOKEN || '';
 const devicePairingToken = process.env.DEVICE_PAIRING_TOKEN || '';
@@ -218,11 +220,13 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && path === '/v1/ai/generate') {
       if (!aiAllowed(req)) return send(res, 429, { ok: false, error: 'AI_RATE_LIMITED' });
       const input = await body(req);
-      if (!Array.isArray(input.messages) || !input.messages.length || input.messages.length > MAX_AI_MESSAGES || input.messages.some((m) => !m || typeof m.content !== 'string' || !m.content.trim() || m.content.length > MAX_AI_MESSAGE_CHARS)) {
+      if (!Array.isArray(input.messages) || !input.messages.length || input.messages.length > MAX_AI_MESSAGES || input.messages.some((m) => !m || !['system', 'user', 'assistant'].includes(m.role) || typeof m.content !== 'string' || !m.content.trim() || m.content.length > MAX_AI_MESSAGE_CHARS)) {
         return send(res, 400, { ok: false, error: 'INVALID_AI_REQUEST' });
       }
+      const requestedTimeout = Number(input.timeoutMs || 30000);
+      const timeoutMs = Number.isFinite(requestedTimeout) ? Math.min(Math.max(requestedTimeout, AI_MIN_TIMEOUT_MS), AI_MAX_TIMEOUT_MS) : 30000;
       try {
-        const result = await generateWithFreePool({ messages: input.messages, timeoutMs: Math.min(Math.max(Number(input.timeoutMs || 30000), 1000), 45000) });
+        const result = await generateWithFreePool({ messages: input.messages, timeoutMs });
         return send(res, 200, { ok: true, provider: result.provider, model: result.model, text: result.text, diagnostics: result.diagnostics });
       } catch (error) { return send(res, 503, { ok: false, error: error.message || 'AI_PROVIDERS_UNAVAILABLE', diagnostics: error.diagnostics || [] }); }
     }
@@ -239,8 +243,8 @@ const server = http.createServer(async (req, res) => {
     const deviceProtected = path.startsWith('/v1/device/');
     let deviceAuth = null;
     if (deviceProtected) {
-      const rawBody = await body(req);
-      const canonicalBody = JSON.stringify(rawBody);
+      const rawBodyObject = await body(req);
+      const canonicalBody = JSON.stringify(rawBodyObject);
       deviceAuth = await verifyDeviceRequest(req, canonicalBody);
       if (!deviceAuth.ok) return send(res, deviceAuth.status, { ok: false, error: deviceAuth.error });
       req.bodyRaw = canonicalBody;
