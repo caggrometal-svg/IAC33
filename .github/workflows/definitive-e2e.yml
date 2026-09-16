@@ -1,0 +1,106 @@
+name: IAC33 Definitive E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  definitive-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: iac33
+          POSTGRES_PASSWORD: iac33
+          POSTGRES_DB: iac33
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U iac33 -d iac33"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify production health
+        run: |
+          curl --fail --silent --show-error https://iac33-backend.onrender.com/health
+          curl --fail --silent --show-error https://iac33-backend.onrender.com/ready
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Apply database schema
+        env:
+          PGPASSWORD: iac33
+        run: psql "postgresql://iac33@127.0.0.1:5432/iac33" -f backend/schema.sql
+
+      - name: Start backend
+        env:
+          PORT: 3000
+          DATABASE_URL: postgresql://iac33:iac33@127.0.0.1:5432/iac33
+          CONTROL_TOKEN: iac33-e2e-control
+          DEVICE_PAIRING_TOKEN: iac33-e2e-pairing
+        run: |
+          node backend/src/start.js > /tmp/iac33-backend.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/health | grep -q '"ok":true'; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/iac33-backend.log
+          exit 1
+
+      - name: Run backend device lifecycle E2E
+        env:
+          E2E_BASE_URL: http://127.0.0.1:3000
+          DEVICE_PAIRING_TOKEN: iac33-e2e-pairing
+          CONTROL_TOKEN: iac33-e2e-control
+          DATABASE_URL: postgresql://iac33:iac33@127.0.0.1:5432/iac33
+        run: node backend/test/e2e-device-control.mjs
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Run Android OTA and application unit tests
+        run: gradle testDebugUnitTest --no-daemon
+
+      - name: Build Android debug artifact
+        run: gradle assembleDebug --no-daemon
+
+      - name: Run Android connected E2E
+        uses: ReactiveCircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          profile: pixel_2
+          emulator-build: 7425822
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          disable-animations: true
+          script: gradle connectedDebugAndroidTest --no-daemon --stacktrace
+
+      - name: Backend log on failure
+        if: failure()
+        run: cat /tmp/iac33-backend.log || true
