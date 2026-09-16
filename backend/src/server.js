@@ -8,7 +8,8 @@ const port = Number(process.env.PORT || 3000);
 const controlToken = process.env.CONTROL_TOKEN || '';
 const devicePairingToken = process.env.DEVICE_PAIRING_TOKEN || '';
 const databaseUrl = process.env.DATABASE_URL || '';
-const pool = databaseUrl ? new Pool({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false } }) : null;
+const databaseNeedsSsl = databaseUrl && !/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(databaseUrl);
+const pool = databaseUrl ? new Pool({ connectionString: databaseUrl, ...(databaseNeedsSsl ? { ssl: { rejectUnauthorized: false } } : {}) }) : null;
 const aiWindow = new Map();
 
 function authorized(req) {
