@@ -63,8 +63,24 @@ jobs:
         run: node backend/test/e2e-device-control.mjs
       - name: Live Render smoke test
         run: |
-          curl --fail --silent --show-error https://iac33-backend.onrender.com/health
-          curl --fail --silent --show-error https://iac33-backend.onrender.com/ready
+          set -e
+          for i in $(seq 1 60); do
+            if curl --fail --silent --show-error https://iac33-backend.onrender.com/health > /tmp/render-health.json; then
+              cat /tmp/render-health.json
+              break
+            fi
+            sleep 2
+          done
+          test -s /tmp/render-health.json
+          for i in $(seq 1 60); do
+            if curl --fail --silent --show-error https://iac33-backend.onrender.com/ready > /tmp/render-ready.json; then
+              cat /tmp/render-ready.json
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Render readiness did not recover within 120s"
+          exit 1
       - name: Backend logs on failure
         if: failure()
         run: cat /tmp/iac33-backend.log
