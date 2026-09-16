@@ -5,6 +5,7 @@ import cl.iac33.app.core.ControlEngine
 import cl.iac33.app.core.OperationError
 import cl.iac33.app.core.OperationResult
 import cl.iac33.app.core.RemoteCommand
+import cl.iac33.app.ota.OtaCommandExecutor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -18,6 +19,8 @@ class RemoteControlEngine(
     private val baseUrl: String,
     private val identity: DeviceIdentity = DeviceIdentity(context)
 ) : ControlEngine {
+    private val otaExecutor = OtaCommandExecutor(context.applicationContext)
+
     suspend fun enroll(pairingToken: String): OperationResult<Unit> = withContext(Dispatchers.IO) {
         if (baseUrl.isBlank()) return@withContext OperationResult.Failure(OperationError.NETWORK, "Backend URL not configured")
         try {
@@ -81,6 +84,8 @@ class RemoteControlEngine(
 
     private fun executeCommand(command: RemoteCommand): Pair<Boolean, String> = when (command.type.uppercase()) {
         "PING", "NOOP" -> true to "ACK:${command.type.uppercase()}"
+        "OTA_INSTALL" -> runCatching { true to otaExecutor.execute(command.payload) }
+            .getOrElse { false to "OTA_FAILED:${it.message ?: "unknown"}" }
         else -> false to "UNSUPPORTED_COMMAND:${command.type}"
     }
 
