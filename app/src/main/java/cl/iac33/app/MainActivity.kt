@@ -116,9 +116,7 @@ private fun AiPanel() {
     val scope = rememberCoroutineScope()
     var draft by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
-    var lines by rememberSaveable {
-        mutableStateOf(listOf(ChatLine("assistant", "IAC33 listo. Puedes escribir una consulta.")))
-    }
+    var lines by remember { mutableStateOf(listOf(ChatLine("assistant", "IAC33 listo. Puedes escribir una consulta."))) }
 
     Column(Modifier.fillMaxSize()) {
         Text("IA", style = MaterialTheme.typography.headlineMedium)
