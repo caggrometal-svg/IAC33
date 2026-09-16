@@ -5,9 +5,10 @@ const allowedTransitions = new Map([
 ]);
 
 function validCommand(input) {
-  return input && typeof input.id === 'string' && input.id.length > 0 && input.id.length <= 128 &&
+  return Boolean(input) &&
+    typeof input.id === 'string' && input.id.length > 0 && input.id.length <= 128 &&
     typeof input.type === 'string' && /^[A-Za-z0-9._:-]{1,64}$/.test(input.type) &&
-    input.payload && typeof input.payload === 'object' &&
+    Boolean(input.payload) && typeof input.payload === 'object' &&
     typeof input.idempotencyKey === 'string' && /^[A-Za-z0-9._:-]{8,128}$/.test(input.idempotencyKey) &&
     Number.isFinite(Date.parse(input.expiresAt));
 }
