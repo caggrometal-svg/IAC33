@@ -59,15 +59,19 @@ function aiAllowed(req) {
 async function body(req, maxBytes = MAX_BODY_BYTES) {
   const chunks = [];
   let total = 0;
+  let oversized = false;
   for await (const chunk of req) {
     total += chunk.length;
     if (total > maxBytes) {
-      req.destroy();
-      const error = new Error('BODY_TOO_LARGE');
-      error.status = 413;
-      throw error;
+      oversized = true;
+      continue;
     }
     chunks.push(chunk);
+  }
+  if (oversized) {
+    const error = new Error('BODY_TOO_LARGE');
+    error.status = 413;
+    throw error;
   }
   if (!chunks.length) return {};
   try {
@@ -195,11 +199,13 @@ async function transition(id, target, actor, detail = {}) {
 
 const server = http.createServer(async (req, res) => {
   try {
-    if (req.method === 'GET' && new URL(req.url, 'http://localhost').pathname === '/health') {
+    const path = new URL(req.url, 'http://localhost').pathname;
+
+    if (req.method === 'GET' && path === '/health') {
       return send(res, 200, { ok: true, service: 'iac33-backend', status: 'alive' });
     }
 
-    if (req.method === 'GET' && new URL(req.url, 'http://localhost').pathname === '/ready') {
+    if (req.method === 'GET' && path === '/ready') {
       if (!pool) return send(res, 503, { ok: false, service: 'iac33-backend', status: 'not_ready', database: false });
       try {
         await pool.query({ text: 'SELECT 1', statement_timeout: 4000 });
@@ -208,8 +214,6 @@ const server = http.createServer(async (req, res) => {
         return send(res, 503, { ok: false, service: 'iac33-backend', status: 'not_ready', database: false });
       }
     }
-
-    const path = new URL(req.url, 'http://localhost').pathname;
 
     if (req.method === 'POST' && path === '/v1/ai/generate') {
       if (!aiAllowed(req)) return send(res, 429, { ok: false, error: 'AI_RATE_LIMITED' });
@@ -235,22 +239,11 @@ const server = http.createServer(async (req, res) => {
     const deviceProtected = path.startsWith('/v1/device/');
     let deviceAuth = null;
     if (deviceProtected) {
-      const chunks = [];
-      let total = 0;
-      for await (const chunk of req) {
-        total += chunk.length;
-        if (total > MAX_BODY_BYTES) {
-          req.destroy();
-          const error = new Error('BODY_TOO_LARGE');
-          error.status = 413;
-          throw error;
-        }
-        chunks.push(chunk);
-      }
-      const rawBody = Buffer.concat(chunks).toString('utf8');
-      deviceAuth = await verifyDeviceRequest(req, rawBody);
+      const rawBody = await body(req);
+      const canonicalBody = JSON.stringify(rawBody);
+      deviceAuth = await verifyDeviceRequest(req, canonicalBody);
       if (!deviceAuth.ok) return send(res, deviceAuth.status, { ok: false, error: deviceAuth.error });
-      req.bodyRaw = rawBody;
+      req.bodyRaw = canonicalBody;
     }
 
     if (!deviceProtected && !authorized(req)) return send(res, 401, { ok: false, error: 'UNAUTHORIZED' });
