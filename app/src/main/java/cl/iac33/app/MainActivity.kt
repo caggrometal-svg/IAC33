@@ -22,6 +22,7 @@ import cl.iac33.app.core.location.LocationSnapshot
 
 private val sections = listOf("IA", "Sismos", "C33", "Red", "GPS", "Control")
 
+@OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
     private val locationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
