@@ -34,3 +34,11 @@ CREATE TABLE IF NOT EXISTS devices (
   last_seen_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS devices_last_seen_idx ON devices(last_seen_at);
+
+CREATE TABLE IF NOT EXISTS device_nonces (
+  device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  nonce TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (device_id, nonce)
+);
+CREATE INDEX IF NOT EXISTS device_nonces_expiry_idx ON device_nonces(expires_at);
