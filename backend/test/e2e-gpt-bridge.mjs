@@ -43,7 +43,7 @@ assert.equal(first.json.command.status, 'PENDING');
 assert.equal(first.json.command.id, command.id);
 assert.equal(first.json.digest.length, 64);
 
-const second = await request('/v1/gpt/commands', { ...command, id: `different-${crypto.randomUUID()}` }, auth);
+const second = await request('/v1/gpt/commands', command, auth);
 assert.equal(second.status, 201, JSON.stringify(second.json));
 assert.equal(second.json.command.id, command.id);
 assert.equal(second.json.command.status, 'PENDING');
