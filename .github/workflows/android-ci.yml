@@ -37,8 +37,14 @@ jobs:
           profile: pixel_2
           emulator-build: 7425822
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          disable-linux-hw-accel: true
           disable-animations: true
-          script: gradle connectedDebugAndroidTest --no-daemon --stacktrace
+          script: |
+            adb kill-server || true
+            adb start-server
+            adb wait-for-device
+            until adb shell getprop sys.boot_completed | grep -m 1 '1'; do sleep 2; done
+            gradle connectedDebugAndroidTest --no-daemon --stacktrace
       - name: Upload Android test reports
         if: always()
         uses: actions/upload-artifact@v4
