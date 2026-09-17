@@ -5,7 +5,7 @@ const MAX_PAYLOAD_BYTES = 128 * 1024;
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
 const DEVICE_ID_PATTERN = /^[A-Za-z0-9._:-]{16,128}$/;
-const ALLOWED_TYPES = new Set(['sync', 'update', 'device.action']);
+const ALLOWED_TYPES = new Set(['sync', 'update', 'device.action', 'OTA_INSTALL']);
 
 function validateGptCommand(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
