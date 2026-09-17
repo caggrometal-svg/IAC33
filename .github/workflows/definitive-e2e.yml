@@ -28,6 +28,14 @@ jobs:
           --health-interval=5s
           --health-timeout=5s
           --health-retries=20
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: iac33
+      PGDATABASE: iac33
+      CONTROL_TOKEN: iac33-e2e-control
+      DEVICE_PAIRING_TOKEN: iac33-e2e-pairing
+      E2E_BASE_URL: http://127.0.0.1:3000
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,33 +51,21 @@ jobs:
         working-directory: backend
         run: npm install --ignore-scripts --no-audit --no-fund
       - name: Apply database schema
-        run: psql "postgresql://iac33@127.0.0.1:5432/iac33" -f backend/schema.sql
+        run: psql -v ON_ERROR_STOP=1 -f backend/schema.sql
       - name: Start backend
-        env:
-          PORT: 3000
-          DATABASE_URL: postgresql://iac33@127.0.0.1:5432/iac33
-          CONTROL_TOKEN: iac33-e2e-control
-          DEVICE_PAIRING_TOKEN: iac33-e2e-pairing
         run: |
+          export DATABASE_URL="postgresql://${PGUSER}@${PGHOST}:${PGPORT}/${PGDATABASE}"
+          export PORT=3000
           node backend/src/start.js > /tmp/iac33-backend.log 2>&1 &
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:3000/health | grep -q '\"ok\":true'; then exit 0; fi
+            if curl -fsS "$E2E_BASE_URL/health" | grep -q '\"ok\":true'; then exit 0; fi
             sleep 1
           done
           cat /tmp/iac33-backend.log
           exit 1
       - name: Run GPT bridge E2E
-        env:
-          E2E_BASE_URL: http://127.0.0.1:3000
-          CONTROL_TOKEN: iac33-e2e-control
-          DATABASE_URL: postgresql://iac33@127.0.0.1:3000/iac33
         run: node backend/test/e2e-gpt-bridge.mjs
       - name: Run backend device lifecycle E2E
-        env:
-          E2E_BASE_URL: http://127.0.0.1:3000
-          DEVICE_PAIRING_TOKEN: iac33-e2e-pairing
-          CONTROL_TOKEN: iac33-e2e-control
-          DATABASE_URL: postgresql://iac33@127.0.0.1:3000/iac33
         run: node backend/test/e2e-device-control.mjs
       - name: Backend log on failure
         if: failure()
