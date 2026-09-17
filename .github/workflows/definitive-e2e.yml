@@ -30,25 +30,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Verify production health
         run: |
           curl --fail --silent --show-error https://iac33-backend.onrender.com/health
           curl --fail --silent --show-error https://iac33-backend.onrender.com/ready
-
       - name: Set up Node 20
         uses: actions/setup-node@v4
         with:
-          distribution: node
           node-version: '20'
-
       - name: Install backend dependencies
         working-directory: backend
         run: npm install --ignore-scripts --no-audit --no-fund
-
       - name: Apply database schema
         run: psql "postgresql://iac33@127.0.0.1:5432/iac33" -f backend/schema.sql
-
       - name: Start backend
         env:
           PORT: 3000
@@ -63,7 +57,6 @@ jobs:
           done
           cat /tmp/iac33-backend.log
           exit 1
-
       - name: Run backend device lifecycle E2E
         env:
           E2E_BASE_URL: http://127.0.0.1:3000
@@ -71,23 +64,19 @@ jobs:
           CONTROL_TOKEN: iac33-e2e-control
           DATABASE_URL: postgresql://iac33@127.0.0.1:5432/iac33
         run: node backend/test/e2e-device-control.mjs
-
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
-
       - name: Run Android unit tests and build in one Gradle invocation
         run: gradle testDebugUnitTest assembleDebug --parallel --build-cache --no-daemon --console=plain
-
       - name: Run Android connected E2E
-        timeout-minutes: 15
+        timeout-minutes: 20
         uses: ReactiveCircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -102,26 +91,24 @@ jobs:
           disable-linux-hw-accel: true
           disable-animations: true
           script: |
-            set -euo pipefail
+            set -eu
             timeout 90s adb wait-for-device
-            timeout 5m bash -c 'until adb shell getprop sys.boot_completed | grep -m 1 "1"; do sleep 2; done'
-            timeout 3m bash -c 'until adb shell cmd package list packages >/dev/null 2>&1 && adb shell cmd activity get-config >/dev/null 2>&1; do sleep 2; done'
-            timeout 2m bash -c 'until adb shell dumpsys keystore2 >/dev/null 2>&1; do sleep 2; done'
+            timeout 5m sh -c 'until adb shell getprop sys.boot_completed | grep -m 1 "1"; do sleep 2; done'
+            timeout 3m sh -c 'until adb shell cmd package list packages >/dev/null 2>&1 && adb shell cmd activity get-config >/dev/null 2>&1; do sleep 2; done'
+            timeout 2m sh -c 'until adb shell dumpsys keystore2 >/dev/null 2>&1; do sleep 2; done'
             adb shell settings put global verifier_verify_adb_installs 0 || true
             adb shell settings put global package_verifier_enable 0 || true
             adb shell settings put global package_verifier_user_consent 1 || true
             adb shell getprop ro.build.version.sdk
-            timeout 8m gradle connectedDebugAndroidTest --no-daemon --stacktrace --console=plain
-
-      - name: Android diagnostics on failure
-        if: failure()
-        run: |
-          adb shell getprop ro.build.version.sdk || true
-          adb shell getprop sys.boot_completed || true
-          adb shell dumpsys keystore2 || true
-          adb shell dumpsys package || true
-          adb logcat -d -t 500 || true
-
+            if ! timeout 10m gradle connectedDebugAndroidTest --no-daemon --stacktrace --console=plain; then
+              echo 'Android connected E2E failed; collecting in-emulator diagnostics before shutdown.'
+              timeout 20s adb shell getprop ro.build.version.sdk || true
+              timeout 20s adb shell getprop sys.boot_completed || true
+              timeout 30s adb shell dumpsys keystore2 || true
+              timeout 30s adb shell dumpsys package cl.iac33.app || true
+              timeout 60s adb logcat -d -t 1000 || true
+              exit 1
+            fi
       - name: Backend log on failure
         if: failure()
         run: cat /tmp/iac33-backend.log || true
