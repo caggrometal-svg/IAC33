@@ -50,7 +50,7 @@ jobs:
         run: |
           node backend/src/start.js > /tmp/iac33-backend.log 2>&1 &
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:3000/health | grep -q '"ok":true'; then exit 0; fi
+            if curl -fsS http://127.0.0.1:3000/health | grep -q '\"ok\":true'; then exit 0; fi
             sleep 1
           done
           cat /tmp/iac33-backend.log
@@ -62,6 +62,12 @@ jobs:
           CONTROL_TOKEN: iac33-e2e-control
           DATABASE_URL: postgresql://iac33:iac33@127.0.0.1:5432/iac33
         run: node backend/test/e2e-device-control.mjs
+      - name: Run GPT bridge E2E
+        env:
+          E2E_BASE_URL: http://127.0.0.1:3000
+          CONTROL_TOKEN: iac33-e2e-control
+          DATABASE_URL: postgresql://iac33:iac33@127.0.0.1:5432/iac33
+        run: node backend/test/e2e-gpt-bridge.mjs
       - name: Backend log on failure
         if: failure()
         run: cat /tmp/iac33-backend.log
