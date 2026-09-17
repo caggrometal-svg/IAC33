@@ -26,6 +26,29 @@ test('returns first responding provider with diagnostics', async () => {
   assert.deepEqual(result.diagnostics[0].state, 'RESPONDING');
 });
 
+test('uses keyless Animica first in the default free pool', async () => {
+  delete process.env.AI_PROVIDER_ORDER;
+  delete process.env.ANIMICA_MODEL;
+  delete process.env.OPENROUTER_API_KEY;
+  let requestedUrl = '';
+  let requestedBody = null;
+  let authorization;
+  globalThis.fetch = async (url, options) => {
+    requestedUrl = String(url);
+    requestedBody = JSON.parse(options.body);
+    authorization = options.headers.authorization;
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'free-ok' } }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+
+  const result = await router.generateWithFreePool({ messages, timeoutMs: 1000 });
+  assert.equal(result.provider, 'animica');
+  assert.equal(result.model, 'animica-chat');
+  assert.equal(result.text, 'free-ok');
+  assert.equal(requestedUrl, 'https://animica.dev/v1/chat/completions');
+  assert.equal(requestedBody.model, 'animica-chat');
+  assert.equal(authorization, undefined);
+});
+
 test('fails over after rate limit', async () => {
   process.env.AI_PROVIDER_ORDER = 'openrouter,groq';
   process.env.OPENROUTER_API_KEY = 'test-openrouter';
