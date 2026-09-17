@@ -10,11 +10,7 @@ assert.ok(controlToken, 'CONTROL_TOKEN is required');
 assert.ok(databaseUrl, 'DATABASE_URL is required');
 
 async function request(path, body, headers = {}) {
-  const response = await fetch(`${baseUrl}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...headers },
-    body: JSON.stringify(body)
-  });
+  const response = await fetch(`${baseUrl}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
   const text = await response.text();
   return { status: response.status, json: text ? JSON.parse(text) : {} };
 }
@@ -51,7 +47,7 @@ const second = await request('/v1/gpt/commands', { ...command, id: `different-${
 assert.equal(second.status, 201, JSON.stringify(second.json));
 assert.equal(second.json.command.id, command.id);
 assert.equal(second.json.command.status, 'PENDING');
-assert.equal(second.json.digest, undefined, 'idempotent request should still return its digest only when accepted');
+assert.equal(second.json.digest, first.json.digest);
 
 const db = new pg.Pool({ connectionString: databaseUrl });
 try {
