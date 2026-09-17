@@ -25,12 +25,10 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
-      - name: Unit tests
-        run: gradle testDebugUnitTest --no-daemon
-      - name: Build debug APK
-        run: gradle assembleDebug --no-daemon
+      - name: Unit tests and build
+        run: gradle testDebugUnitTest assembleDebug --parallel --build-cache --no-daemon --console=plain
       - name: Android Keystore E2E
-        timeout-minutes: 15
+        timeout-minutes: 20
         uses: ReactiveCircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -45,24 +43,24 @@ jobs:
           disable-linux-hw-accel: true
           disable-animations: true
           script: |
-            set -euo pipefail
+            set -eu
             timeout 90s adb wait-for-device
-            timeout 5m bash -c 'until adb shell getprop sys.boot_completed | grep -m 1 "1"; do sleep 2; done'
-            timeout 3m bash -c 'until adb shell cmd package list packages >/dev/null 2>&1 && adb shell cmd activity get-config >/dev/null 2>&1; do sleep 2; done'
-            timeout 2m bash -c 'until adb shell dumpsys keystore2 >/dev/null 2>&1; do sleep 2; done'
+            timeout 5m sh -c 'until adb shell getprop sys.boot_completed | grep -m 1 "1"; do sleep 2; done'
+            timeout 3m sh -c 'until adb shell cmd package list packages >/dev/null 2>&1 && adb shell cmd activity get-config >/dev/null 2>&1; do sleep 2; done'
+            timeout 2m sh -c 'until adb shell dumpsys keystore2 >/dev/null 2>&1; do sleep 2; done'
             adb shell settings put global verifier_verify_adb_installs 0 || true
             adb shell settings put global package_verifier_enable 0 || true
             adb shell settings put global package_verifier_user_consent 1 || true
             adb shell getprop ro.build.version.sdk
-            timeout 8m gradle connectedDebugAndroidTest --no-daemon --stacktrace --console=plain
-      - name: Android diagnostics on failure
-        if: failure()
-        run: |
-          adb shell getprop ro.build.version.sdk || true
-          adb shell getprop sys.boot_completed || true
-          adb shell dumpsys keystore2 || true
-          adb shell dumpsys package || true
-          adb logcat -d -t 500 || true
+            if ! timeout 10m gradle connectedDebugAndroidTest --no-daemon --stacktrace --console=plain; then
+              echo 'Android Keystore E2E failed; collecting diagnostics before emulator shutdown.'
+              timeout 20s adb shell getprop ro.build.version.sdk || true
+              timeout 20s adb shell getprop sys.boot_completed || true
+              timeout 30s adb shell dumpsys keystore2 || true
+              timeout 30s adb shell dumpsys package cl.iac33.app || true
+              timeout 60s adb logcat -d -t 1000 || true
+              exit 1
+            fi
       - name: Upload Android test reports
         if: always()
         uses: actions/upload-artifact@v4
