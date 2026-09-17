@@ -49,16 +49,62 @@ assert.equal(second.json.command.id, command.id);
 assert.equal(second.json.command.status, 'PENDING');
 assert.equal(second.json.digest, first.json.digest);
 
+const ota = {
+  id: `ota-e2e-${crypto.randomUUID()}`,
+  type: 'OTA_INSTALL',
+  payload: {
+    manifest: {
+      schemaVersion: 1,
+      releaseId: 'e2e-release',
+      appVersion: '0.1.1',
+      createdAt: new Date().toISOString(),
+      minimumSupportedVersion: '0.1.0',
+      artifactRef: 'https://example.invalid/iac33-e2e.apk',
+      artifactSha256: '0'.repeat(64),
+      artifactSize: 1024,
+      algorithm: 'SHA256withECDSA',
+      signatureBase64: 'e2e-signature',
+      keyId: 'e2e-key',
+      rollbackRef: 'e2e-rollback'
+    }
+  },
+  idempotencyKey: `ota-idem-${crypto.randomUUID()}`,
+  expiresAt: new Date(Date.now() + 120_000).toISOString()
+};
+const otaCreate = await request('/v1/gpt/commands', ota, auth);
+assert.equal(otaCreate.status, 201, JSON.stringify(otaCreate.json));
+assert.equal(otaCreate.json.command.status, 'PENDING');
+
+const otaRepeat = await request('/v1/gpt/commands', ota, auth);
+assert.equal(otaRepeat.status, 201, JSON.stringify(otaRepeat.json));
+assert.equal(otaRepeat.json.command.id, ota.id);
+assert.equal(otaRepeat.json.digest, otaCreate.json.digest);
+
+const otaClaim = await request('/v1/commands/claim-next', { actor: 'ota-e2e' }, auth);
+assert.equal(otaClaim.status, 200, JSON.stringify(otaClaim.json));
+assert.equal(otaClaim.json.command.id, ota.id);
+assert.equal(otaClaim.json.command.status, 'CLAIMED');
+
+for (const transition of ['execute', 'succeed']) {
+  const result = await request(`/v1/commands/${ota.id}/${transition}`, {}, auth);
+  assert.equal(result.status, 200, JSON.stringify(result.json));
+}
+assert.equal((await request(`/v1/commands/${ota.id}/succeed`, {}, auth)).status, 409);
+
 const db = new pg.Pool({ connectionString: databaseUrl });
 try {
   const row = await db.query('SELECT id,status FROM commands WHERE idempotency_key=$1', [command.idempotencyKey]);
   assert.equal(row.rowCount, 1);
   assert.equal(row.rows[0].id, command.id);
   assert.equal(row.rows[0].status, 'PENDING');
-  const audit = await db.query('SELECT actor,to_status FROM command_audit WHERE command_id=$1 ORDER BY id', [command.id]);
-  assert.deepEqual(audit.rows.map((r) => [r.actor, r.to_status]), [['gpt', 'PENDING']]);
+  const otaRow = await db.query('SELECT id,type,status FROM commands WHERE id=$1', [ota.id]);
+  assert.equal(otaRow.rowCount, 1);
+  assert.equal(otaRow.rows[0].type, 'OTA_INSTALL');
+  assert.equal(otaRow.rows[0].status, 'SUCCEEDED');
+  const audit = await db.query('SELECT from_status,to_status FROM command_audit WHERE command_id=$1 ORDER BY id', [ota.id]);
+  assert.deepEqual(audit.rows.map((r) => [r.from_status, r.to_status]), [['PENDING', 'CLAIMED'], ['CLAIMED', 'EXECUTING'], ['EXECUTING', 'SUCCEEDED']]);
 } finally {
   await db.end();
 }
 
-console.log(JSON.stringify({ ok: true, bridge: 'PASS', auth: 'PASS', allowlist: 'PASS', idempotency: 'PASS', audit: 'PASS' }, null, 2));
+console.log(JSON.stringify({ ok: true, bridge: 'PASS', otaAdmission: 'PASS', otaLifecycle: 'PASS', auth: 'PASS', allowlist: 'PASS', idempotency: 'PASS', audit: 'PASS' }, null, 2));
