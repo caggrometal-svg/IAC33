@@ -8,6 +8,8 @@ test('GPT bridge accepts bounded allowed command', () => assert.equal(validateGp
 test('GPT bridge rejects unauthorized command type', () => assert.equal(validateGptCommand({ ...base(), type: 'shell.exec' }), false));
 test('GPT bridge rejects expired command', () => assert.equal(validateGptCommand({ ...base(), expiresAt: new Date(Date.now() - 1).toISOString() }), false));
 test('GPT bridge rejects oversized payload', () => assert.equal(validateGptCommand({ ...base(), payload: { data: 'x'.repeat(128 * 1024) } }), false));
+test('GPT bridge rejects malformed target device identity', () => assert.equal(validateGptCommand({ ...base(), targetDeviceId: 'device-1' }), false));
+test('GPT bridge accepts bounded target device identity', () => assert.equal(validateGptCommand({ ...base(), targetDeviceId: 'device-1234567890123456' }), true));
 test('GPT bridge exposes explicit allowlist', () => {
   assert.deepEqual([...ALLOWED_TYPES].sort(), ['device.action', 'sync', 'update'].sort());
   assert.equal(commandDigest(base()).length, 64);
