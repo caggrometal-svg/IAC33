@@ -30,22 +30,25 @@ jobs:
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
       - name: Android Keystore E2E
+        timeout-minutes: 15
         uses: ReactiveCircus/android-emulator-runner@v2
         with:
           api-level: 34
           arch: x86_64
           profile: pixel_2
-          emulator-build: 7425822
-          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
-          disable-linux-hw-accel: true
+          force-avd-creation: true
+          cores: 2
+          ram-size: 2048M
+          heap-size: 512M
+          disk-size: 4096M
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -no-metrics
+          disable-linux-hw-accel: false
           disable-animations: true
           script: |
-            adb kill-server || true
-            adb start-server
             adb wait-for-device
             timeout 5m bash -c 'until adb shell getprop sys.boot_completed | grep -m 1 "1"; do sleep 2; done'
             adb shell getprop ro.build.version.sdk
-            gradle connectedDebugAndroidTest --no-daemon --stacktrace
+            timeout 10m gradle connectedDebugAndroidTest --no-daemon --stacktrace --console=plain
       - name: Upload Android test reports
         if: always()
         uses: actions/upload-artifact@v4
