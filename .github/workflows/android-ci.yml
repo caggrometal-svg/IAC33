@@ -45,13 +45,24 @@ jobs:
           disable-linux-hw-accel: true
           disable-animations: true
           script: |
+            set -euo pipefail
             timeout 90s adb wait-for-device
             timeout 5m bash -c 'until adb shell getprop sys.boot_completed | grep -m 1 "1"; do sleep 2; done'
             timeout 3m bash -c 'until adb shell cmd package list packages >/dev/null 2>&1 && adb shell cmd activity get-config >/dev/null 2>&1; do sleep 2; done'
+            timeout 2m bash -c 'until adb shell dumpsys keystore2 >/dev/null 2>&1; do sleep 2; done'
             adb shell settings put global verifier_verify_adb_installs 0 || true
             adb shell settings put global package_verifier_enable 0 || true
             adb shell settings put global package_verifier_user_consent 1 || true
-            timeout 10m gradle connectedDebugAndroidTest --no-daemon --stacktrace --console=plain
+            adb shell getprop ro.build.version.sdk
+            timeout 8m gradle connectedDebugAndroidTest --no-daemon --stacktrace --console=plain
+      - name: Android diagnostics on failure
+        if: failure()
+        run: |
+          adb shell getprop ro.build.version.sdk || true
+          adb shell getprop sys.boot_completed || true
+          adb shell dumpsys keystore2 || true
+          adb shell dumpsys package || true
+          adb logcat -d -t 500 || true
       - name: Upload Android test reports
         if: always()
         uses: actions/upload-artifact@v4
