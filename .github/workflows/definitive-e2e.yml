@@ -40,6 +40,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
 
       - name: Install backend dependencies
         working-directory: backend
@@ -59,7 +61,7 @@ jobs:
         run: |
           node backend/src/start.js > /tmp/iac33-backend.log 2>&1 &
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:3000/health | grep -q '"ok":true'; then exit 0; fi
+            if curl -fsS http://127.0.0.1:3000/health | grep -q '\"ok\":true'; then exit 0; fi
             sleep 1
           done
           cat /tmp/iac33-backend.log
@@ -84,11 +86,8 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Run Android OTA and application unit tests
-        run: gradle testDebugUnitTest --no-daemon
-
-      - name: Build Android debug artifact
-        run: gradle assembleDebug --no-daemon
+      - name: Run Android unit tests and build in one Gradle invocation
+        run: gradle testDebugUnitTest assembleDebug --parallel --build-cache --no-daemon --console=plain
 
       - name: Run Android connected E2E
         uses: ReactiveCircus/android-emulator-runner@v2
@@ -99,7 +98,7 @@ jobs:
           emulator-build: 7425822
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
           disable-animations: true
-          script: gradle connectedDebugAndroidTest --no-daemon --stacktrace
+          script: gradle connectedDebugAndroidTest --no-daemon --stacktrace --console=plain
 
       - name: Backend log on failure
         if: failure()
