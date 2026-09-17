@@ -49,6 +49,11 @@ assert.equal(second.json.command.id, command.id);
 assert.equal(second.json.command.status, 'PENDING');
 assert.equal(second.json.digest, first.json.digest);
 
+for (const transition of ['claim', 'execute', 'succeed']) {
+  const result = await request(`/v1/commands/${command.id}/${transition}`, {}, auth);
+  assert.equal(result.status, 200, JSON.stringify(result.json));
+}
+
 const ota = {
   id: `ota-e2e-${crypto.randomUUID()}`,
   type: 'OTA_INSTALL',
