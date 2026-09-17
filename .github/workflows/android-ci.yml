@@ -45,7 +45,7 @@ jobs:
           disable-linux-hw-accel: true
           disable-animations: true
           script: |
-            adb wait-for-device
+            timeout 90s adb wait-for-device
             timeout 5m bash -c 'until adb shell getprop sys.boot_completed | grep -m 1 "1"; do sleep 2; done'
             adb shell getprop ro.build.version.sdk
             timeout 10m gradle connectedDebugAndroidTest --no-daemon --stacktrace --console=plain
