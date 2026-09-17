@@ -35,20 +35,21 @@ jobs:
         timeout-minutes: 25
         uses: ReactiveCircus/android-emulator-runner@v2
         with:
-          api-level: 34
-          arch: x86_64
+          api-level: 30
+          arch: x86
           profile: pixel_2
           force-avd-creation: true
-          cores: 2
-          ram-size: 2048M
+          cores: 4
+          ram-size: 3072M
           heap-size: 512M
           disk-size: 4096M
+          disable-linux-hw-accel: true
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -no-metrics
           disable-animations: true
           script: |
             set -eu
             timeout 90s adb wait-for-device
-            timeout 5m sh -c 'until adb shell getprop sys.boot_completed | grep -m 1 "1"; do sleep 2; done'
+            timeout 8m sh -c 'until adb shell getprop sys.boot_completed | grep -m 1 "1"; do sleep 2; done'
             timeout 3m sh -c 'until adb shell cmd package list packages >/dev/null 2>&1 && adb shell cmd activity get-config >/dev/null 2>&1; do sleep 2; done'
             adb shell settings put global verifier_verify_adb_installs 0 || true
             adb shell settings put global package_verifier_enable 0 || true
