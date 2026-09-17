@@ -57,6 +57,12 @@ jobs:
           done
           cat /tmp/iac33-backend.log
           exit 1
+      - name: Run GPT bridge E2E
+        env:
+          E2E_BASE_URL: http://127.0.0.1:3000
+          CONTROL_TOKEN: iac33-e2e-control
+          DATABASE_URL: postgresql://iac33@127.0.0.1:5432/iac33
+        run: node backend/test/e2e-gpt-bridge.mjs
       - name: Run backend device lifecycle E2E
         env:
           E2E_BASE_URL: http://127.0.0.1:3000
