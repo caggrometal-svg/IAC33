@@ -4,6 +4,7 @@ const MAX_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_PAYLOAD_BYTES = 128 * 1024;
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
+const DEVICE_ID_PATTERN = /^[A-Za-z0-9._:-]{16,128}$/;
 const ALLOWED_TYPES = new Set(['sync', 'update', 'device.action']);
 
 function validateGptCommand(input) {
@@ -12,6 +13,7 @@ function validateGptCommand(input) {
   if (typeof input.type !== 'string' || !ALLOWED_TYPES.has(input.type)) return false;
   if (!input.payload || typeof input.payload !== 'object' || Array.isArray(input.payload)) return false;
   if (typeof input.idempotencyKey !== 'string' || !IDEMPOTENCY_PATTERN.test(input.idempotencyKey)) return false;
+  if (input.targetDeviceId !== undefined && (typeof input.targetDeviceId !== 'string' || !DEVICE_ID_PATTERN.test(input.targetDeviceId))) return false;
   const expiresAt = Date.parse(input.expiresAt);
   if (!Number.isFinite(expiresAt) || expiresAt <= Date.now() || expiresAt > Date.now() + MAX_TTL_MS) return false;
   try {
