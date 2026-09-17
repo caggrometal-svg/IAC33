@@ -3,6 +3,7 @@ package cl.iac33.app.control
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import java.io.ByteArrayOutputStream
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.Signature
@@ -35,7 +36,8 @@ class DeviceIdentity(context: Context) {
         val signature = Signature.getInstance("SHA256withECDSA")
         signature.initSign(privateKey as java.security.PrivateKey)
         signature.update(payload)
-        return Base64.getEncoder().encodeToString(signature.sign())
+        val encoded = normalizeEcdsaSignature(signature.sign())
+        return Base64.getEncoder().encodeToString(encoded)
     }
 
     fun markEnrolled(value: Boolean) {
@@ -55,6 +57,21 @@ class DeviceIdentity(context: Context) {
         )
         generator.generateKeyPair()
         prefs.edit().putString("device_id", "iac33-" + UUID.randomUUID().toString()).putBoolean("enrolled", false).apply()
+    }
+
+    private fun normalizeEcdsaSignature(signature: ByteArray): ByteArray {
+        if (signature.size != 64 || signature[0].toInt() == 0x30) return signature
+        val r = derInteger(signature.copyOfRange(0, 32))
+        val s = derInteger(signature.copyOfRange(32, 64))
+        val body = ByteArrayOutputStream().apply { write(0x02); write(r.size); write(r); write(0x02); write(s.size); write(s) }.toByteArray()
+        return ByteArrayOutputStream().apply { write(0x30); write(body.size); write(body) }.toByteArray()
+    }
+
+    private fun derInteger(value: ByteArray): ByteArray {
+        var start = 0
+        while (start < value.lastIndex && value[start].toInt() == 0) start++
+        val trimmed = value.copyOfRange(start, value.size)
+        return if ((trimmed[0].toInt() and 0x80) != 0) byteArrayOf(0) + trimmed else trimmed
     }
 
     private fun keyStore(): KeyStore = KeyStore.getInstance(keyStoreName).apply { load(null) }
