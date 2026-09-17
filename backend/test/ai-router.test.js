@@ -100,3 +100,23 @@ test('passes a bounded timeout to each provider from the global connectivity bud
   assert.equal(result.text, 'budget-ok');
   assert.equal(observedSignal.aborted, false);
 });
+
+test('default connectivity budget leaves time for provider failover', async () => {
+  delete process.env.AI_PROVIDER_ORDER;
+  delete process.env.AI_TOTAL_TIMEOUT_MS;
+  process.env.OPENROUTER_API_KEY = 'test-openrouter';
+  let calls = 0;
+  globalThis.fetch = async (url, options) => {
+    calls += 1;
+    if (String(url).includes('animica.dev')) {
+      assert.ok(options.signal);
+      return new Response(JSON.stringify({ error: { message: 'temporary outage' } }), { status: 503, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'fallback-ok' } }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+
+  const result = await router.generateWithFreePool({ messages });
+  assert.equal(calls, 2);
+  assert.equal(result.provider, 'openrouter');
+  assert.equal(result.text, 'fallback-ok');
+});

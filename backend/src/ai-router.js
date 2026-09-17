@@ -35,10 +35,10 @@ async function callOpenAiCompatible(url, key, model, messages, timeoutMs) {
     const text = json?.choices?.[0]?.message?.content || ''; if (!text) throw providerError(502, 'Provider returned empty response'); return { text, model };
   } finally { clearTimeout(timer); }
 }
-export async function generateWithFreePool({ messages, timeoutMs = 30000 }) {
+export async function generateWithFreePool({ messages, timeoutMs = 25000 }) {
   const configuredOrder = (process.env.AI_PROVIDER_ORDER || 'animica,openrouter,freeinference,groq,gemini,cloudflare').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
   const order = [...new Set(configuredOrder)]; const diagnostics = [];
-  const totalBudgetMs = Math.min(Math.max(Number(process.env.AI_TOTAL_TIMEOUT_MS || timeoutMs), 1000), 120000);
+  const totalBudgetMs = Math.min(Math.max(Number(process.env.AI_TOTAL_TIMEOUT_MS || 60000), 1000), 120000);
   const deadline = Date.now() + totalBudgetMs;
   for (const id of order) {
     const provider = providers[id]; if (!provider || (provider.key && !process.env[provider.key])) { diagnostics.push({ provider: id, state: 'NOT_CONFIGURED' }); continue; }
