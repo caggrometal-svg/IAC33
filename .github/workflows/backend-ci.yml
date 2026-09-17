@@ -15,7 +15,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: backend
@@ -27,5 +27,5 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package.json
       - run: npm install --ignore-scripts
-      - name: Run backend tests
-        run: node --test --test-force-exit --test-reporter=spec test/server.test.js
+      - name: Run all backend tests
+        run: npm test
