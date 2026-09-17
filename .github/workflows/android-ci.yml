@@ -43,7 +43,8 @@ jobs:
             adb kill-server || true
             adb start-server
             adb wait-for-device
-            until adb shell getprop sys.boot_completed | grep -m 1 '1'; do sleep 2; done
+            timeout 5m bash -c 'until adb shell getprop sys.boot_completed | grep -m 1 "1"; do sleep 2; done'
+            adb shell getprop ro.build.version.sdk
             gradle connectedDebugAndroidTest --no-daemon --stacktrace
       - name: Upload Android test reports
         if: always()
