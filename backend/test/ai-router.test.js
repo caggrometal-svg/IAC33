@@ -62,3 +62,18 @@ test('reports all providers unavailable with diagnostics', async () => {
     },
   );
 });
+
+test('passes a bounded timeout to each provider from the global connectivity budget', async () => {
+  process.env.AI_PROVIDER_ORDER = 'groq';
+  process.env.GROQ_API_KEY = 'test-groq';
+  process.env.AI_TOTAL_TIMEOUT_MS = '1500';
+  let observedSignal;
+  globalThis.fetch = async (_url, options) => {
+    observedSignal = options.signal;
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'budget-ok' } }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+
+  const result = await router.generateWithFreePool({ messages, timeoutMs: 10000 });
+  assert.equal(result.text, 'budget-ok');
+  assert.equal(observedSignal.aborted, false);
+});
