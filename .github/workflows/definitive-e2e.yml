@@ -97,8 +97,14 @@ jobs:
           profile: pixel_2
           emulator-build: 7425822
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          disable-linux-hw-accel: true
           disable-animations: true
-          script: gradle connectedDebugAndroidTest --no-daemon --stacktrace --console=plain
+          script: |
+            adb kill-server || true
+            adb start-server
+            adb wait-for-device
+            until adb shell getprop sys.boot_completed | grep -m 1 '1'; do sleep 2; done
+            gradle connectedDebugAndroidTest --no-daemon --stacktrace --console=plain
 
       - name: Backend log on failure
         if: failure()
