@@ -4,7 +4,7 @@ const providers = {
   gemini: { key: 'GEMINI_API_KEY', async call(messages, timeoutMs) { const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash'; return callGemini(messages, timeoutMs, model); } },
   cloudflare: { key: 'CLOUDFLARE_API_TOKEN', async call(messages, timeoutMs) { const account = process.env.CLOUDFLARE_ACCOUNT_ID; const model = process.env.CLOUDFLARE_MODEL || '@cf/zai-org/glm-4.7-flash'; if (!account) throw providerError(503, 'Cloudflare account not configured'); return callCloudflare(messages, timeoutMs, account, model); } },
   freeinference: { key: 'FREEINFERENCE_API_KEY', async call(messages, timeoutMs) { return callOpenAiCompatible('https://freeinference.org/v1/chat/completions', process.env.FREEINFERENCE_API_KEY, process.env.FREEINFERENCE_MODEL || 'glm-5.1', messages, timeoutMs); } },
-  animica: { key: null, async call(messages, timeoutMs) { return callOpenAiCompatible('https://animica.dev/v1/chat/completions', null, process.env.ANIMICA_MODEL || 'animica-chat-small', messages, timeoutMs); } }
+  animica: { key: null, async call(messages, timeoutMs) { return callOpenAiCompatible('https://animica.dev/v1/chat/completions', null, process.env.ANIMICA_MODEL || 'animica-chat', messages, timeoutMs); } }
 };
 function providerError(status, message) { const error = new Error(message); error.status = status; return error; }
 async function callGemini(messages, timeoutMs, model) {
@@ -36,7 +36,7 @@ async function callOpenAiCompatible(url, key, model, messages, timeoutMs) {
   } finally { clearTimeout(timer); }
 }
 export async function generateWithFreePool({ messages, timeoutMs = 30000 }) {
-  const configuredOrder = (process.env.AI_PROVIDER_ORDER || 'openrouter,freeinference,animica,groq,gemini,cloudflare').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
+  const configuredOrder = (process.env.AI_PROVIDER_ORDER || 'animica,openrouter,freeinference,groq,gemini,cloudflare').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
   const order = [...new Set(configuredOrder)]; const diagnostics = [];
   const totalBudgetMs = Math.min(Math.max(Number(process.env.AI_TOTAL_TIMEOUT_MS || timeoutMs), 1000), 120000);
   const deadline = Date.now() + totalBudgetMs;
