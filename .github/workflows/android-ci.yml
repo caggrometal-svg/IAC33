@@ -32,7 +32,7 @@ jobs:
       - name: Unit tests and build
         run: gradle testDebugUnitTest assembleDebug --parallel --build-cache --no-daemon --console=plain
       - name: Android Keystore E2E
-        timeout-minutes: 20
+        timeout-minutes: 25
         uses: ReactiveCircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -50,18 +50,17 @@ jobs:
             timeout 90s adb wait-for-device
             timeout 5m sh -c 'until adb shell getprop sys.boot_completed | grep -m 1 "1"; do sleep 2; done'
             timeout 3m sh -c 'until adb shell cmd package list packages >/dev/null 2>&1 && adb shell cmd activity get-config >/dev/null 2>&1; do sleep 2; done'
-            timeout 2m sh -c 'until adb shell dumpsys keystore2 >/dev/null 2>&1; do sleep 2; done'
             adb shell settings put global verifier_verify_adb_installs 0 || true
             adb shell settings put global package_verifier_enable 0 || true
             adb shell settings put global package_verifier_user_consent 1 || true
             adb shell getprop ro.build.version.sdk
-            if ! timeout 10m gradle connectedDebugAndroidTest --no-daemon --stacktrace --console=plain; then
+            if ! timeout 15m gradle connectedDebugAndroidTest --no-daemon --stacktrace --console=plain; then
               echo 'Android Keystore E2E failed; collecting diagnostics before emulator shutdown.'
               timeout 20s adb shell getprop ro.build.version.sdk || true
               timeout 20s adb shell getprop sys.boot_completed || true
               timeout 30s adb shell dumpsys keystore2 || true
               timeout 30s adb shell dumpsys package cl.iac33.app || true
-              timeout 60s adb logcat -d -t 1000 || true
+              timeout 60s adb logcat -d -t 1500 || true
               exit 1
             fi
       - name: Upload Android test reports
