@@ -63,10 +63,10 @@ jobs:
           done
           cat /tmp/iac33-backend.log
           exit 1
-      - name: Run GPT bridge E2E
-        run: node backend/test/e2e-gpt-bridge.mjs
       - name: Run backend device lifecycle E2E
         run: node backend/test/e2e-device-control.mjs
+      - name: Run GPT bridge E2E
+        run: node backend/test/e2e-gpt-bridge.mjs
       - name: Backend log on failure
         if: failure()
         run: cat /tmp/iac33-backend.log || true
