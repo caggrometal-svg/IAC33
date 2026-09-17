@@ -38,10 +38,15 @@ async function callOpenAiCompatible(url, key, model, messages, timeoutMs) {
 export async function generateWithFreePool({ messages, timeoutMs = 30000 }) {
   const configuredOrder = (process.env.AI_PROVIDER_ORDER || 'openrouter,freeinference,animica,groq,gemini,cloudflare').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
   const order = [...new Set(configuredOrder)]; const diagnostics = [];
+  const totalBudgetMs = Math.min(Math.max(Number(process.env.AI_TOTAL_TIMEOUT_MS || timeoutMs), 1000), 120000);
+  const deadline = Date.now() + totalBudgetMs;
   for (const id of order) {
     const provider = providers[id]; if (!provider || (provider.key && !process.env[provider.key])) { diagnostics.push({ provider: id, state: 'NOT_CONFIGURED' }); continue; }
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) { diagnostics.push({ provider: id, state: 'BUDGET_EXHAUSTED' }); break; }
+    const attemptTimeoutMs = Math.min(timeoutMs, remainingMs);
     const started = Date.now();
-    try { const result = await provider.call(messages, timeoutMs); diagnostics.push({ provider: id, state: 'RESPONDING', latencyMs: Date.now() - started }); return { ...result, provider: id, diagnostics }; }
+    try { const result = await provider.call(messages, attemptTimeoutMs); diagnostics.push({ provider: id, state: 'RESPONDING', latencyMs: Date.now() - started }); return { ...result, provider: id, diagnostics }; }
     catch (error) { diagnostics.push({ provider: id, state: error?.name === 'AbortError' ? 'TIMEOUT' : error?.status === 429 ? 'RATE_LIMITED' : 'FAILED', status: error?.status || 500, latencyMs: Date.now() - started }); }
   }
   const error = new Error('AI_PROVIDERS_UNAVAILABLE'); error.diagnostics = diagnostics; throw error;
