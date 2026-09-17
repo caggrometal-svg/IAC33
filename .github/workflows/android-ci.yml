@@ -47,6 +47,7 @@ jobs:
           script: |
             timeout 90s adb wait-for-device
             timeout 5m bash -c 'until adb shell getprop sys.boot_completed | grep -m 1 "1"; do sleep 2; done'
+            timeout 3m bash -c 'until adb shell cmd package list packages >/dev/null 2>&1 && adb shell cmd activity get-config >/dev/null 2>&1; do sleep 2; done'
             adb shell getprop ro.build.version.sdk
             timeout 10m gradle connectedDebugAndroidTest --no-daemon --stacktrace --console=plain
       - name: Upload Android test reports
