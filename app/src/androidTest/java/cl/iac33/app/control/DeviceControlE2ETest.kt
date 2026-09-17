@@ -83,9 +83,11 @@ class DeviceControlE2ETest {
         assertNotNull(deviceId); assertNotNull(timestamp); assertNotNull(nonce); assertNotNull(signatureB64)
         val body = request.body.readUtf8()
         val canonical = listOf("POST", request.path!!, timestamp!!, nonce!!, body).joinToString("\n")
+        val signatureBytes = Base64.getDecoder().decode(signatureB64)
+        assertTrue("ECDSA signature must be DER encoded", signatureBytes.size >= 8 && signatureBytes[0].toInt() == 0x30)
         val verifier = Signature.getInstance("SHA256withECDSA")
         verifier.initVerify(publicKey)
         verifier.update(canonical.toByteArray(Charsets.UTF_8))
-        assertTrue("Android Keystore signature must verify", verifier.verify(Base64.getDecoder().decode(signatureB64)))
+        assertTrue("Android Keystore signature must verify", verifier.verify(signatureBytes))
     }
 }
