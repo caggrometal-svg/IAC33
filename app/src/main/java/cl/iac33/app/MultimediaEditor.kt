@@ -63,8 +63,8 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.Brightness
 import androidx.media3.effect.Contrast
+import androidx.media3.effect.HslAdjustment
 import androidx.media3.effect.Crop
-import androidx.media3.effect.RgbAdjustment
 import androidx.media3.effect.RgbFilter
 import androidx.media3.effect.RgbMatrix
 import androidx.media3.effect.TextOverlay
@@ -354,10 +354,14 @@ private fun EditorStudio(
     }
 
     val previewPlayer = player
+    val previewSize = remember(source) { source?.let { readVideoSize(context, it) } ?: (0 to 0) }
     previewPlayer?.let {
         it.setPlaybackSpeed(speed)
         it.setVideoEffects(
-            buildPreviewEffects(brightness, contrast, saturation, filter, aspect, overlayText)
+            buildPreviewEffects(
+                brightness, contrast, saturation, filter, aspect, overlayText,
+                previewSize.first, previewSize.second
+            )
         )
     }
 
@@ -533,14 +537,17 @@ private fun buildPreviewEffects(
     saturation: Float,
     filter: MediaFilter,
     aspect: AspectRatio,
-    text: String
+    text: String,
+    width: Int,
+    height: Int
 ): List<androidx.media3.common.Effect> {
     val effects = mutableListOf<androidx.media3.common.Effect>()
     if (brightness != 0f) effects += Brightness(brightness.coerceIn(-1f, 1f))
     if (contrast != 0f) effects += Contrast(contrast.coerceIn(-1f, 1f))
     if (saturation != 1f) {
-        val v = saturation.coerceIn(0f, 3f)
-        effects += RgbAdjustment.Builder().setRedScale(v).setGreenScale(v).setBlueScale(v).build()
+        effects += HslAdjustment.Builder()
+            .adjustSaturation(((saturation - 1f) * 100f).coerceIn(-100f, 100f))
+            .build()
     }
     when (filter) {
         MediaFilter.BW -> effects += RgbFilter.createGrayscaleFilter()
@@ -566,12 +573,43 @@ private fun buildPreviewEffects(
     }
     when (aspect) {
         AspectRatio.ORIGINAL -> Unit
-        AspectRatio.PORTRAIT -> effects += Crop(-0.56f, 0.56f, -1f, 1f)
-        AspectRatio.LANDSCAPE -> effects += Crop(-1f, 1f, -0.5625f, 0.5625f)
-        AspectRatio.SQUARE -> effects += Crop(-1f, 1f, -1f, 1f)
+        AspectRatio.PORTRAIT -> effects += centerCropForRatio(width, height, 9f / 16f)
+        AspectRatio.LANDSCAPE -> effects += centerCropForRatio(width, height, 16f / 9f)
+        AspectRatio.SQUARE -> effects += centerCropForRatio(width, height, 1f)
     }
-    if (text.isNotBlank()) effects += TextOverlay.createStaticTextOverlay(android.text.SpannableString(text))
+    if (text.isNotBlank()) effects += TextOverlay.createStaticTextOverlay(
+        android.text.SpannableString(text).apply {
+            setSpan(
+                android.text.style.ForegroundColorSpan(android.graphics.Color.WHITE),
+                0, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+    )
     return effects
+}
+
+private fun readVideoSize(context: Context, uri: Uri): Pair<Int, Int> {
+    val retriever = android.media.MediaMetadataRetriever()
+    return try {
+        retriever.setDataSource(context, uri)
+        val width = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+        val height = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+        width to height
+    } finally {
+        retriever.release()
+    }
+}
+
+private fun centerCropForRatio(width: Int, height: Int, targetRatio: Float): Crop {
+    if (width <= 0 || height <= 0) return Crop(-1f, 1f, -1f, 1f)
+    val sourceRatio = width.toFloat() / height.toFloat()
+    return if (sourceRatio > targetRatio) {
+        val halfWidth = (targetRatio / sourceRatio).coerceIn(0.05f, 1f)
+        Crop(-halfWidth, halfWidth, -1f, 1f)
+    } else {
+        val halfHeight = (sourceRatio / targetRatio).coerceIn(0.05f, 1f)
+        Crop(-1f, 1f, -halfHeight, halfHeight)
+    }
 }
 
 private fun LabeledSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, onValue: (Float) -> Unit) {
