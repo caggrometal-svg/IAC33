@@ -3,6 +3,8 @@ package cl.iac33.app.seismic
 import java.net.HttpURLConnection
 import java.net.URL
 import org.json.JSONObject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 data class SeismicEvent(
     val id: String,
@@ -20,7 +22,7 @@ data class SeismicSnapshot(
 )
 
 class SeismicClient(private val baseUrl: String) {
-    suspend fun latest(): Result<SeismicSnapshot> = runCatching {
+    suspend fun latest(): Result<SeismicSnapshot> = withContext(Dispatchers.IO) { runCatching {
         val connection = (URL(baseUrl.trimEnd('/') + "/v1/seismic/latest").openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 8_000
