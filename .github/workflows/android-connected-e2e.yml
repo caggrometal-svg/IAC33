@@ -19,17 +19,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
       - name: Set up JDK 17
         uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.11.1'
+
       - name: Run Android unit tests and build
         run: gradle testDebugUnitTest assembleDebug --parallel --build-cache --no-daemon --console=plain
+
       - name: Run Android connected E2E
         timeout-minutes: 25
         uses: ReactiveCircus/android-emulator-runner@v2
@@ -38,18 +42,91 @@ jobs:
           arch: x86_64
           profile: pixel_2
           force-avd-creation: true
-          cores: 2
-          ram-size: 2048M
-          heap-size: 512M
-          disk-size: 4096M
+          cores: 4
+          ram-size: 4096M
+          heap-size: 768M
+          disk-size: 8192M
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -no-metrics
           disable-animations: true
           script: |
             set -eu
-            timeout 90s adb wait-for-device
-            timeout 5m sh -c 'until adb shell getprop sys.boot_completed | grep -m 1 "1"; do sleep 2; done'
+
+            wait_for_android() {
+              timeout 90s adb wait-for-device
+              timeout 5m sh -c 'until adb shell getprop sys.boot_completed | grep -m 1 "1"; do sleep 2; done'
+            }
+
+            wait_for_android
+
+            # Refresh ADB after emulator boot. The previous run showed an ADB protocol
+            # fault immediately before PackageInstaller verification timed out.
+            adb kill-server || true
+            adb start-server
+            adb reconnect offline || true
+            sleep 3
+            wait_for_android
+
+            # Disable ADB/package verification paths that can stall test APK installs.
+            # Keep the integrity verifier timeout explicit for slow CI emulator startup.
             adb shell settings put global verifier_verify_adb_installs 0 || true
             adb shell settings put global package_verifier_enable 0 || true
             adb shell settings put global package_verifier_user_consent 1 || true
+            adb shell settings put global verifier_timeout 120000 || true
+            adb shell settings put global streaming_verifier_timeout 120000 || true
+            adb shell settings put global app_integrity_verification_timeout 120000 || true
+
             adb shell getprop ro.build.version.sdk
-            timeout 15m gradle connectedDebugAndroidTest --no-daemon --stacktrace --console=plain
+            adb devices
+            adb shell settings get global verifier_verify_adb_installs || true
+            adb shell settings get global package_verifier_enable || true
+
+            run_connected_tests() {
+              timeout 15m gradle connectedDebugAndroidTest --no-daemon --stacktrace --console=plain
+            }
+
+            # Retry only for transient emulator/ADB/package-install failures.
+            set +e
+            run_connected_tests > /tmp/iac33-connected-e2e.log 2>&1
+            status=$?
+            set -e
+            cat /tmp/iac33-connected-e2e.log
+
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+
+            if grep -Eq 'INSTALL_FAILED_VERIFICATION_FAILURE|adb protocol fault|Failed to install split APK|Integrity verification timed out' /tmp/iac33-connected-e2e.log; then
+              echo "Transient emulator/package-install failure detected; refreshing ADB and retrying once."
+              adb kill-server || true
+              adb start-server
+              sleep 3
+              wait_for_android
+              adb shell settings put global verifier_verify_adb_installs 0 || true
+              adb shell settings put global package_verifier_enable 0 || true
+              adb shell settings put global package_verifier_user_consent 1 || true
+              adb shell settings put global verifier_timeout 120000 || true
+              adb shell settings put global streaming_verifier_timeout 120000 || true
+              adb shell settings put global app_integrity_verification_timeout 120000 || true
+              run_connected_tests
+              exit $?
+            fi
+
+            exit "$status"
+
+      - name: Upload debug APK
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: iac33-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload connected test report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: iac33-connected-test-report
+          path: app/build/reports/androidTests/connected/**
+          if-no-files-found: warn
+          retention-days: 7
