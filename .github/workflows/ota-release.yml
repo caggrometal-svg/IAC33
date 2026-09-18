@@ -63,10 +63,24 @@ jobs:
           elif openssl pkcs8 -inform DER -in "$RUNNER_TEMP/bridge-key-build.raw" -nocrypt -out "$RUNNER_TEMP/bridge-key-build.pem" 2>/dev/null; then
             :
           elif [ "$(file -b "$RUNNER_TEMP/bridge-key-build.raw")" = "Java KeyStore" ]; then
-            BRIDGE_ALIAS="$(keytool -list -keystore "$RUNNER_TEMP/bridge-key-build.raw" -storepass "$KEYSTORE_PASSWORD" 2>/dev/null | awk -F, '/PrivateKeyEntry/ {gsub(/^ +| +$/, "", $1); print $1; exit}')"
+            BRIDGE_ALIAS=""
+            BRIDGE_SRC_PASS=""
+            while IFS= read -r candidate; do
+              [ -n "$candidate" ] || continue
+              aliases="$(keytool -list -keystore "$RUNNER_TEMP/bridge-key-build.raw" -storetype JKS -storepass "$candidate" 2>/dev/null | awk -F, '/PrivateKeyEntry/ {gsub(/^ +| +$/, "", $1); print $1}')"
+              if [ -n "$aliases" ]; then
+                BRIDGE_ALIAS="$(printf '%s
+' "$aliases" | head -n1)"
+                BRIDGE_SRC_PASS="$candidate"
+                break
+              fi
+            done <<EOF
+$KEYSTORE_PASSWORD
+$KEY_PASSWORD
+changeit
+EOF
             test -n "$BRIDGE_ALIAS"
-            keytool -importkeystore -noprompt               -srckeystore "$RUNNER_TEMP/bridge-key-build.raw" -srcstoretype JKS               -srcstorepass "$KEYSTORE_PASSWORD" -srcalias "$BRIDGE_ALIAS" -srckeypass "$KEYSTORE_PASSWORD"               -destkeystore "$RUNNER_TEMP/bridge-key-build.p12" -deststoretype PKCS12               -deststorepass "$KEYSTORE_PASSWORD" -destkeypass "$KEYSTORE_PASSWORD" >/dev/null 2>&1
-            openssl pkcs12 -in "$RUNNER_TEMP/bridge-key-build.p12" -nocerts -nodes               -passin pass:"$KEYSTORE_PASSWORD" -out "$RUNNER_TEMP/bridge-key-build.pem" >/dev/null 2>&1
+            keytool -importkeystore -noprompt               -srckeystore "$RUNNER_TEMP/bridge-key-build.raw" -srcstoretype JKS               -srcstorepass "$BRIDGE_SRC_PASS" -srcalias "$BRIDGE_ALIAS" -srckeypass "$KEY_PASSWORD"               -destkeystore "$RUNNER_TEMP/bridge-key-build.p12" -deststoretype PKCS12               -deststorepass "$BRIDGE_PASSWORD" -destkeypass "$BRIDGE_PASSWORD" >/dev/null 2>&1
           elif openssl pkcs12 -in "$RUNNER_TEMP/bridge-key-build.raw" -nocerts -nodes -passin pass: -out "$RUNNER_TEMP/bridge-key-build.pem" 2>/dev/null; then
             :
           else
