@@ -7,6 +7,12 @@ const providers = {
   animica: { key: null, async call(messages, timeoutMs) { return callOpenAiCompatible('https://animica.dev/v1/chat/completions', null, process.env.ANIMICA_MODEL || 'animica-chat', messages, timeoutMs); } }
 };
 function providerError(status, message) { const error = new Error(message); error.status = status; return error; }
+
+async function readJsonBounded(response) {
+  const text = await response.text();
+  if (Buffer.byteLength(text, 'utf8') > 2 * 1024 * 1024) throw providerError(502, 'Provider response too large');
+  try { return text ? JSON.parse(text) : {}; } catch { throw providerError(502, 'Provider returned invalid JSON'); }
+}
 async function callGemini(messages, timeoutMs, model) {
   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -14,7 +20,7 @@ async function callGemini(messages, timeoutMs, model) {
     const system = messages.filter(m => m.role === 'system').map(m => m.content).join('\n');
     const payload = { contents }; if (system) payload.systemInstruction = { parts: [{ text: system }] };
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(process.env.GEMINI_API_KEY)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload), signal: controller.signal });
-    const json = await response.json().catch(() => ({})); if (!response.ok) throw providerError(response.status, json?.error?.message || 'Gemini request failed');
+    const json = await readJsonBounded(response).catch(() => ({})); if (!response.ok) throw providerError(response.status, json?.error?.message || 'Gemini request failed');
     const text = json?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || ''; if (!text) throw providerError(502, 'Gemini returned empty response'); return { text, model };
   } finally { clearTimeout(timer); }
 }
@@ -22,7 +28,7 @@ async function callCloudflare(messages, timeoutMs, account, model) {
   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(account)}/ai/run/${encodeURIComponent(model)}`, { method: 'POST', headers: { authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ messages }), signal: controller.signal });
-    const json = await response.json().catch(() => ({})); if (!response.ok) throw providerError(response.status, json?.errors?.[0]?.message || 'Cloudflare request failed');
+    const json = await readJsonBounded(response).catch(() => ({})); if (!response.ok) throw providerError(response.status, json?.errors?.[0]?.message || 'Cloudflare request failed');
     const text = json?.result?.response || json?.result?.text || ''; if (!text) throw providerError(502, 'Cloudflare returned empty response'); return { text, model };
   } finally { clearTimeout(timer); }
 }
@@ -31,7 +37,7 @@ async function callOpenAiCompatible(url, key, model, messages, timeoutMs) {
   try {
     const headers = { 'content-type': 'application/json' }; if (key) headers.authorization = `Bearer ${key}`;
     const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ model, messages }), signal: controller.signal });
-    const json = await response.json().catch(() => ({})); if (!response.ok) throw providerError(response.status, json?.error?.message || 'Provider request failed');
+    const json = await readJsonBounded(response).catch(() => ({})); if (!response.ok) throw providerError(response.status, json?.error?.message || 'Provider request failed');
     const text = json?.choices?.[0]?.message?.content || ''; if (!text) throw providerError(502, 'Provider returned empty response'); return { text, model };
   } finally { clearTimeout(timer); }
 }
