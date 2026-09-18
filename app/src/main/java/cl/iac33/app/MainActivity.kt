@@ -113,7 +113,7 @@ class MainActivity : ComponentActivity() {
             var chatLines by remember {
                 mutableStateOf(
                     chatStore.load().ifEmpty {
-                        listOf(ChatLine("assistant", "IAC33 listo. El núcleo local está disponible y puede usar el backend cuando exista conectividad."))
+                        listOf(ChatLine("assistant", "IAC33 listo. El núcleo local está disponible y puede usar el backend cuando exista conectividad.", "local"))
                     }
                 )
             }
