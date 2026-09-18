@@ -4,6 +4,9 @@ const ISSUER = 'https://token.actions.githubusercontent.com';
 const JWKS_URL = 'https://token.actions.githubusercontent.com/.well-known/jwks';
 const DEFAULT_AUDIENCE = 'iac33-backend';
 const DEFAULT_REPOSITORY = 'caggrometal-svg/IAC33';
+const DEFAULT_REPOSITORY_ID = '1372305375';
+const DEFAULT_REPOSITORY_OWNER = 'caggrometal-svg';
+const DEFAULT_REPOSITORY_OWNER_ID = '322356974';
 const DEFAULT_WORKFLOW_REF = 'caggrometal-svg/IAC33/.github/workflows/ota-release.yml@refs/heads/main';
 const DEFAULT_WORKFLOW = 'IAC33 OTA Release';
 const CLOCK_SKEW_SECONDS = 60;
@@ -36,16 +39,28 @@ function validateClaims(claims, {
   repository = DEFAULT_REPOSITORY,
   workflowRef = DEFAULT_WORKFLOW_REF,
   workflow = DEFAULT_WORKFLOW,
+  repositoryId = process.env.GITHUB_OIDC_REPOSITORY_ID || DEFAULT_REPOSITORY_ID,
+  repositoryOwner = DEFAULT_REPOSITORY_OWNER,
+  repositoryOwnerId = DEFAULT_REPOSITORY_OWNER_ID,
 } = {}) {
   const now = Math.floor(Date.now() / 1000);
   if (!constantTimeJsonValue(claims.iss, ISSUER)) return false;
   if (!constantTimeJsonValue(claims.aud, audience)) return false;
   if (!constantTimeJsonValue(claims.repository, repository)) return false;
+  if (!constantTimeJsonValue(claims.repository_id, repositoryId)) return false;
+  if (!constantTimeJsonValue(claims.repository_owner, repositoryOwner)) return false;
+  if (!constantTimeJsonValue(claims.repository_owner_id, repositoryOwnerId)) return false;
   if (!constantTimeJsonValue(claims.ref, 'refs/heads/main')) return false;
+  if (!constantTimeJsonValue(claims.ref_type, 'branch')) return false;
+  if (claims.event_name !== 'push' && claims.event_name !== 'workflow_dispatch') return false;
   if (!constantTimeJsonValue(claims.workflow_ref, workflowRef)) return false;
   if (!constantTimeJsonValue(claims.workflow, workflow)) return false;
-  if (claims.exp == null || Number(claims.exp) < now - CLOCK_SKEW_SECONDS) return false;
-  if (claims.nbf != null && Number(claims.nbf) > now + CLOCK_SKEW_SECONDS) return false;
+  const exp = Number(claims.exp);
+  const nbf = claims.nbf == null ? null : Number(claims.nbf);
+  const iat = claims.iat == null ? null : Number(claims.iat);
+  if (!Number.isFinite(exp) || exp < now - CLOCK_SKEW_SECONDS) return false;
+  if (nbf != null && (!Number.isFinite(nbf) || nbf > now + CLOCK_SKEW_SECONDS)) return false;
+  if (iat != null && (!Number.isFinite(iat) || iat > now + CLOCK_SKEW_SECONDS || iat < now - 15 * 60)) return false;
   return true;
 }
 
