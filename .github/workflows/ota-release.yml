@@ -53,17 +53,56 @@ jobs:
         run: |
           set -eu
           test -n "$BRIDGE_KEY_B64"
-          printf '%s' "$BRIDGE_KEY_B64" | base64 --decode > "$RUNNER_TEMP/bridge-key.bin"
-          if openssl pkey -in "$RUNNER_TEMP/bridge-key.bin" -out "$RUNNER_TEMP/bridge-key.pem" 2>/dev/null; then
-            :
-          elif openssl pkey -inform DER -in "$RUNNER_TEMP/bridge-key.bin" -out "$RUNNER_TEMP/bridge-key.pem" 2>/dev/null; then
-            :
+          printf '%s' "$BRIDGE_KEY_B64" > "$RUNNER_TEMP/bridge-key.secret"
+          python3 - "$RUNNER_TEMP/bridge-key.secret" "$RUNNER_TEMP/bridge-key.pem" <<'PY'
+          import base64, pathlib, sys
+          src, dst = map(pathlib.Path, sys.argv[1:3])
+          value = src.read_text().strip()
+          raw = value.encode()
+          if b"-----BEGIN " in raw:
+              key = raw
+          else:
+              key = base64.b64decode(raw, validate=True)
+              if b"-----BEGIN " not in key and len(key) != 32:
+                  try:
+                      second = base64.b64decode(key, validate=True)
+                      if b"-----BEGIN " in second or len(second) in (32, 138, 121):
+                          key = second
+                  except Exception:
+                      pass
+          pathlib.Path(str(dst) + ".raw").write_bytes(key)
+          print(len(key))
+          PY
+          if grep -q -- '-----BEGIN .*PRIVATE KEY-----' "$RUNNER_TEMP/bridge-key.pem.raw"; then
+            cp "$RUNNER_TEMP/bridge-key.pem.raw" "$RUNNER_TEMP/bridge-key.pem"
+          elif [ "$(wc -c < "$RUNNER_TEMP/bridge-key.pem.raw")" -eq 32 ]; then
+            python3 - "$RUNNER_TEMP/bridge-key.pem.raw" "$RUNNER_TEMP/bridge-key.der" <<'PY'
+          import pathlib, sys
+          s = pathlib.Path(sys.argv[1]).read_bytes()
+          # PKCS#8 PrivateKeyInfo wrapping an SEC1 P-256 private key.
+          def L(n):
+              if n < 128: return bytes([n])
+              b = n.to_bytes((n.bit_length()+7)//8, "big"); return bytes([0x80|len(b)])+b
+          def T(tag, body): return bytes([tag])+L(len(body))+body
+          oid_ec  = bytes.fromhex("06072A8648CE3D0201")
+          oid_p256 = bytes.fromhex("06082A8648CE3D030107")
+          sec1 = T(0x30, T(0x02,b"\x01") + T(0x04,s) + T(0xA0,oid_p256))
+          pkcs8 = T(0x30, T(0x02,b"\x00") + T(0x30,oid_ec+oid_p256) + T(0x04,sec1))
+          pathlib.Path(sys.argv[2]).write_bytes(pkcs8)
+          PY
+            openssl pkey -inform DER -in "$RUNNER_TEMP/bridge-key.der" -out "$RUNNER_TEMP/bridge-key.pem"
           else
-            echo "BRIDGE_ECDSA_PRIVATE_KEY_B64 must decode to PEM or DER EC private key" >&2
-            exit 1
+            if openssl pkey -in "$RUNNER_TEMP/bridge-key.pem.raw" -out "$RUNNER_TEMP/bridge-key.pem" 2>/dev/null; then
+              :
+            elif openssl pkey -inform DER -in "$RUNNER_TEMP/bridge-key.pem.raw" -out "$RUNNER_TEMP/bridge-key.pem" 2>/dev/null; then
+              :
+            else
+              echo "Invalid Bridge ECDSA private key format" >&2
+              exit 1
+            fi
           fi
           openssl pkey -in "$RUNNER_TEMP/bridge-key.pem" -text -noout >/dev/null
-          openssl dgst -sha256 -sign "$RUNNER_TEMP/bridge-key.pem"             app/build/outputs/apk/release/app-release.apk > "$RUNNER_TEMP/ota-signature.bin"
+          openssl dgst -sha256 -sign "$RUNNER_TEMP/bridge-key.pem" app/build/outputs/apk/release/app-release.apk > "$RUNNER_TEMP/ota-signature.bin"
           base64 -w0 "$RUNNER_TEMP/ota-signature.bin" > "$RUNNER_TEMP/ota-signature.b64"
           sha256sum app/build/outputs/apk/release/app-release.apk | cut -d' ' -f1 > "$RUNNER_TEMP/ota-sha256"
           stat -c '%s' app/build/outputs/apk/release/app-release.apk > "$RUNNER_TEMP/ota-size"
@@ -118,7 +157,7 @@ jobs:
           SIGNATURE="$(cat "$RUNNER_TEMP/ota-signature.b64")"
           COMMAND_ID="ota-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           IDEMPOTENCY="ota-$GITHUB_SHA"
-          IDEMPOTENCY="$IDEMPOTENCY:0:40"
+          IDEMPOTENCY="${IDEMPOTENCY:0:40}"
           jq -n             --arg id "$COMMAND_ID"             --arg type "OTA_INSTALL"             --arg idempotencyKey "$IDEMPOTENCY"             --arg expiresAt "$EXPIRES_AT"             --arg releaseId "$TAG"             --arg appVersion "$VERSION_NAME"             --arg createdAt "$CREATED_AT"             --arg artifactRef "$ARTIFACT_URL"             --arg sha "$SHA256"             --argjson size "$SIZE"             --arg signature "$SIGNATURE"             '{
               id:$id,
               type:$type,
