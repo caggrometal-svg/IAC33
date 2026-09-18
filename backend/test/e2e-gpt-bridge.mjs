@@ -64,7 +64,7 @@ const ota = {
       appVersion: '0.1.1',
       createdAt: new Date().toISOString(),
       minimumSupportedVersion: '0.1.0',
-      artifactRef: 'https://example.invalid/iac33-e2e.apk',
+      artifactRef: 'https://github.com/caggrometal-svg/IAC33/releases/download/e2e-release/iac33-e2e.apk',
       artifactSha256: '0'.repeat(64),
       artifactSize: 1024,
       algorithm: 'SHA256withECDSA',
