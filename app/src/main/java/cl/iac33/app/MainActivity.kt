@@ -7,10 +7,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
+import androidx.compose.ui.Alignment
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
@@ -36,6 +38,7 @@ import java.util.UUID
 data class ChatLine(val role: String, val text: String)
 
 private val sections = listOf("IA", "Sismos", "C33", "Red", "GPS", "Control")
+private val sectionGlyphs = listOf("AI", "EQ", "C33", "NET", "GPS", "CTL")
 
 @OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
@@ -88,7 +91,7 @@ class MainActivity : ComponentActivity() {
                                         selected = index
                                         if (index == 4 && !hasLocationPermission()) requestLocationPermission()
                                     },
-                                    icon = { Text(label.take(1)) },
+                                    icon = { Text(sectionGlyphs[index], style = MaterialTheme.typography.labelSmall) },
                                     label = { Text(label) }
                                 )
                             }
@@ -131,9 +134,15 @@ private fun AiPanel() {
     }
 
     Column(Modifier.fillMaxSize().navigationBarsPadding()) {
-        Text("IA", style = MaterialTheme.typography.headlineMedium)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column {
+                Text("Centro IA", style = MaterialTheme.typography.headlineSmall)
+                Text("Conversación con el núcleo IAC33", style = MaterialTheme.typography.bodySmall)
+            }
+            AssistChip(onClick = {}, enabled = false, label = { Text(if (busy) "Procesando" else "Listo") })
+        }
         Spacer(Modifier.height(8.dp))
-        Card(Modifier.fillMaxWidth().weight(1f)) {
+        Card(Modifier.fillMaxWidth().weight(1f), shape = RoundedCornerShape(20.dp)) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(12.dp),
                 state = listState,
@@ -154,7 +163,8 @@ private fun AiPanel() {
                 onValueChange = { if (it.length <= 32_000) draft = it },
                 modifier = Modifier.weight(1f),
                 enabled = !busy,
-                placeholder = { Text("Escribe una consulta") },
+                placeholder = { Text("Escribe una consulta a IAC33…") },
+                shape = RoundedCornerShape(16.dp),
                 singleLine = false,
                 maxLines = 4
             )
@@ -184,7 +194,8 @@ private fun AiPanel() {
                     }
                 },
                 enabled = !busy && draft.isNotBlank(),
-                modifier = Modifier.height(56.dp)
+                modifier = Modifier.height(56.dp),
+                shape = RoundedCornerShape(16.dp)
             ) {
                 Text(if (busy) "…" else "Enviar")
             }
@@ -211,7 +222,8 @@ private fun DashboardPanel(section: String, connectivityStatus: ConnectivityStat
 
 @Composable
 private fun GpsPanel(location: LocationSnapshot?) {
-    Text("GPS", style = MaterialTheme.typography.headlineMedium)
+    Text("GPS", style = MaterialTheme.typography.headlineSmall)
+    Text("Ubicación del dispositivo", style = MaterialTheme.typography.bodyMedium)
     Spacer(Modifier.height(12.dp))
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
@@ -256,7 +268,7 @@ private fun SeismicPanel() {
 
     Column(Modifier.fillMaxSize().navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Sismicidad", style = MaterialTheme.typography.headlineMedium)
+            Text("Sismicidad", style = MaterialTheme.typography.headlineSmall)
             TextButton(onClick = { refresh() }, enabled = !loading) { Text("Actualizar") }
         }
         Spacer(Modifier.height(8.dp))
