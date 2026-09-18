@@ -82,7 +82,8 @@ class MainActivity : ComponentActivity() {
                 val locationReader = remember { LocationReader(this@MainActivity) }
                 val lifecycleOwner = LocalLifecycleOwner.current
                 val locationScope = rememberCoroutineScope()
-                var chatLines by rememberSaveable { mutableStateOf(listOf(ChatLine("assistant", "IAC33 listo. Puedes escribir una consulta."))) }
+                val chatStore = remember { ChatStore(this@MainActivity) }
+                var chatLines by remember { mutableStateOf(chatStore.load().ifEmpty { listOf(ChatLine("assistant", "IAC33 listo. Puedes escribir una consulta.")) }) }
 
                 DisposableEffect(Unit) {
                     connectivityMonitor.start { status -> connectivityStatus = status }
@@ -122,7 +123,7 @@ class MainActivity : ComponentActivity() {
                     }
                 ) { padding ->
                     Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp).imePadding()) {
-                        if (selected == 0) AiPanel(lines = chatLines, onLinesChange = { chatLines = it })
+                        if (selected == 0) AiPanel(lines = chatLines, onLinesChange = { next -> chatLines = next; chatStore.save(next) })
                         else if (selected == 1) SeismicPanel()
                         else if (selected == 4) GpsPanel(location)
                         else DashboardPanel(sections[selected], connectivityStatus)
@@ -175,7 +176,7 @@ private fun AiPanel(lines: List<ChatLine>, onLinesChange: (List<ChatLine>) -> Un
         }
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(value = draft, onValueChange = { if (it.length <= 32_000) draft = it }, modifier = Modifier.weight(1f), enabled = !busy, placeholder = { Text("Escribe una consulta a IAC33…") }, shape = RoundedCornerShape(16.dp), singleLine = false, maxLines = 4)
+            OutlinedTextField(value = draft, onValueChange = { if (it.length <= ChatStore.MAX_MESSAGE_CHARS) draft = it }, modifier = Modifier.weight(1f), enabled = !busy, placeholder = { Text("Escribe una consulta a IAC33…") }, shape = RoundedCornerShape(16.dp), singleLine = false, maxLines = 4)
             Button(
                 onClick = {
                     val prompt = draft.trim()
@@ -186,7 +187,7 @@ private fun AiPanel(lines: List<ChatLine>, onLinesChange: (List<ChatLine>) -> Un
                     busy = true
                     scope.launch {
                         try {
-                            val messages = listOf(AiMessage("system", "Responde siempre en español. Sé claro, directo y natural. No cambies de idioma salvo que el usuario lo solicite.")) + updated.takeLast(24).map { AiMessage(it.role, it.text) }
+                            val messages = listOf(AiMessage("system", "Responde siempre en español. Sé claro, directo y natural. No cambies de idioma salvo que el usuario lo solicite.")) + updated.takeLast(16).map { AiMessage(it.role, it.text.take(ChatStore.MAX_MESSAGE_CHARS)) }
                             val result = runCatching { engine.generate(AiRequest(UUID.randomUUID().toString(), messages)) }.getOrElse { throwable -> OperationResult.Failure(OperationError.INTERNAL, throwable.message ?: "Error interno de IA") }
                             when (result) {
                                 is OperationResult.Success -> onLinesChange(updated + ChatLine("assistant", result.value.text.orEmpty().ifBlank { "Respuesta vacía." }))
