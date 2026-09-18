@@ -19,6 +19,7 @@ const boundedNumber = (value, fallback, min, max) => { const n = Number(value); 
 const COMMAND_LEASE_MS = boundedNumber(process.env.COMMAND_LEASE_MS, 10 * 60 * 1000, 30_000, 60 * 60 * 1000);
 const PAIRING_REQUESTS_PER_MINUTE = Math.round(boundedNumber(process.env.PAIRING_REQUESTS_PER_MINUTE, 10, 1, 60));
 const AI_REQUESTS_PER_MINUTE = Math.round(boundedNumber(process.env.AI_REQUESTS_PER_MINUTE, 20, 1, 200));
+const MAX_AI_INFLIGHT = Math.round(boundedNumber(process.env.MAX_AI_INFLIGHT, 4, 1, 16));
 const pairingWindow = new Map();
 const port = Number(process.env.PORT || 3000);
 const controlToken = process.env.CONTROL_TOKEN || '';
@@ -27,6 +28,7 @@ const databaseUrl = process.env.DATABASE_URL || '';
 const databaseNeedsSsl = databaseUrl && !/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(databaseUrl);
 const pool = databaseUrl ? new Pool({ connectionString: databaseUrl, ...(databaseNeedsSsl ? { ssl: { rejectUnauthorized: false } } : {}), connectionTimeoutMillis: READY_TIMEOUT_MS, idleTimeoutMillis: 10000, max: 5 }) : null;
 const aiWindow = new Map();
+let aiInflight = 0;
 pool?.on('error', (error) => console.error('IAC33 database pool error', error?.message || error));
 
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('INVALID_PORT');
@@ -248,12 +250,15 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && path === '/v1/ai/generate') {
       if (!aiAllowed(req)) return send(res, 429, { ok: false, error: 'AI_RATE_LIMITED' });
+      if (aiInflight >= MAX_AI_INFLIGHT) return send(res, 503, { ok: false, error: 'AI_BUSY' });
+      aiInflight += 1;
       const input = await body(req);
       if (!Array.isArray(input.messages) || !input.messages.length || input.messages.length > MAX_AI_MESSAGES || input.messages.some((m) => !m || !['system', 'user', 'assistant'].includes(m.role) || typeof m.content !== 'string' || !m.content.trim() || m.content.length > MAX_AI_MESSAGE_CHARS)) return send(res, 400, { ok: false, error: 'INVALID_AI_REQUEST' });
       const requestedTimeout = Number(input.timeoutMs || 30000);
       const timeoutMs = Number.isFinite(requestedTimeout) ? Math.min(Math.max(requestedTimeout, AI_MIN_TIMEOUT_MS), AI_MAX_TIMEOUT_MS) : 30000;
       try { const result = await generateWithFreePool({ messages: input.messages, timeoutMs }); return send(res, 200, { ok: true, provider: result.provider, model: result.model, text: String(result.text).slice(0, MAX_AI_RESPONSE_CHARS), diagnostics: result.diagnostics }); }
       catch (error) { return send(res, 503, { ok: false, error: error.message || 'AI_PROVIDERS_UNAVAILABLE', diagnostics: error.diagnostics || [] }); }
+      finally { aiInflight = Math.max(0, aiInflight - 1); }
     }
     if (req.method === 'POST' && path === '/v1/devices/enroll') {
       if (!pairingAllowed(req)) return send(res, 429, { ok: false, error: 'PAIRING_RATE_LIMITED' });
