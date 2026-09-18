@@ -2,6 +2,7 @@ name: IAC33 OTA Release
 
 on:
   push:
+    branches: [main]
     paths:
       - 'app/**'
       - '.github/workflows/ota-release.yml'
