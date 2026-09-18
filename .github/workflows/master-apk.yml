@@ -14,6 +14,7 @@ on:
       - 'gradlew'
       - 'gradlew.bat'
       - '.github/workflows/master-apk.yml'
+      - '.github/workflows/android-connected-e2e.yml'
     tags:
       - 'v*'
 
@@ -64,11 +65,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.IAC33_ANDROID_KEY_PASSWORD }}
         run: |
           set -eu
-          gradle assembleRelease --no-daemon --stacktrace --console=plain \
-            -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
-            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
-            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
-            -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+          gradle assembleRelease --no-daemon --stacktrace --console=plain             -Pandroid.injected.signing.store.file="$KEYSTORE_PATH"             -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD"             -Pandroid.injected.signing.key.alias="$KEY_ALIAS"             -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
 
       - name: Verify APK exists
         run: |
