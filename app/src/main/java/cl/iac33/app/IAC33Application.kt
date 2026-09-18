@@ -3,6 +3,9 @@ package cl.iac33.app
 import android.app.Application
 import android.content.Context
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.BackoffPolicy
+import androidx.work.Constraints
+import androidx.work.NetworkType
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
@@ -33,10 +36,16 @@ object IAC33Runtime {
         synchronized(this) {
             if (!initialized) {
                 val workManager = WorkManager.getInstance(context)
-                val startup = OneTimeWorkRequestBuilder<DeviceControlWorker>().build()
+                val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+                val startup = OneTimeWorkRequestBuilder<DeviceControlWorker>()
+                    .setConstraints(constraints)
+                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                    .build()
                 workManager.enqueueUniqueWork("iac33-device-control-startup", ExistingWorkPolicy.REPLACE, startup)
 
                 val request = PeriodicWorkRequestBuilder<DeviceControlWorker>(15, TimeUnit.MINUTES)
+                    .setConstraints(constraints)
+                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
                     .build()
                 workManager.enqueueUniquePeriodicWork(
                     "iac33-device-control",
