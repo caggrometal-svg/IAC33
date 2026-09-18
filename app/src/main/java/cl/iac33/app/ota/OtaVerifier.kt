@@ -22,7 +22,7 @@ object OtaVerifier {
             if (read < 0) break
             digest.update(buffer, 0, read)
         }
-        return digest.digest().joinToString("") { "%02x".format(it) }
+        return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
 
     fun verifyDigest(bytes: ByteArray, expectedHex: String): Boolean =
