@@ -3,4 +3,7 @@
     <cache-path
         name="ota_cache"
         path="ota/" />
+    <external-files-path
+        name="iac33_media"
+        path="." />
 </paths>
