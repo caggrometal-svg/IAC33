@@ -1,7 +1,7 @@
 const providers = {
   openrouter: { key: 'OPENROUTER_API_KEY', async call(messages, timeoutMs) { return callOpenAiCompatible('https://openrouter.ai/api/v1/chat/completions', process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_MODEL || 'openrouter/free', messages, timeoutMs); } },
   groq: { key: 'GROQ_API_KEY', async call(messages, timeoutMs) { return callOpenAiCompatible('https://api.groq.com/openai/v1/chat/completions', process.env.GROQ_API_KEY, process.env.GROQ_MODEL || 'openai/gpt-oss-120b', messages, timeoutMs); } },
-  gemini: { key: 'GEMINI_API_KEY', async call(messages, timeoutMs) { const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash'; return callGemini(messages, timeoutMs, model); } },
+  gemini: { key: 'GEMINI_API_KEY', async call(messages, timeoutMs) { const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite'; return callGemini(messages, timeoutMs, model); } },
   cloudflare: { key: 'CLOUDFLARE_API_TOKEN', async call(messages, timeoutMs) { const account = process.env.CLOUDFLARE_ACCOUNT_ID; const model = process.env.CLOUDFLARE_MODEL || '@cf/zai-org/glm-4.7-flash'; if (!account) throw providerError(503, 'Cloudflare account not configured'); return callCloudflare(messages, timeoutMs, account, model); } },
   freeinference: { key: 'FREEINFERENCE_API_KEY', async call(messages, timeoutMs) { return callOpenAiCompatible('https://freeinference.org/v1/chat/completions', process.env.FREEINFERENCE_API_KEY, process.env.FREEINFERENCE_MODEL || 'glm-5.1', messages, timeoutMs); } },
   animica: { key: null, async call(messages, timeoutMs) { return callOpenAiCompatible('https://animica.dev/v1/chat/completions', null, process.env.ANIMICA_MODEL || 'animica-chat', messages, timeoutMs); } }
@@ -42,15 +42,16 @@ async function callOpenAiCompatible(url, key, model, messages, timeoutMs) {
   } finally { clearTimeout(timer); }
 }
 export async function generateWithFreePool({ messages, timeoutMs = 18000 }) {
-  const configuredOrder = (process.env.AI_PROVIDER_ORDER || 'animica,openrouter,freeinference,groq,gemini,cloudflare').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
+  const configuredOrder = (process.env.AI_PROVIDER_ORDER || 'openrouter,gemini,cloudflare,groq,freeinference,animica').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
   const order = [...new Set(configuredOrder)]; const diagnostics = [];
-  const totalBudgetMs = Math.min(Math.max(Number(process.env.AI_TOTAL_TIMEOUT_MS || 30000), 1000), 120000);
+  const totalBudgetMs = Math.min(Math.max(Number(process.env.AI_TOTAL_TIMEOUT_MS || 9000), 1000), 120000);
   const deadline = Date.now() + totalBudgetMs;
   for (const id of order) {
     const provider = providers[id]; if (!provider || (provider.key && !process.env[provider.key])) { diagnostics.push({ provider: id, state: 'NOT_CONFIGURED' }); continue; }
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) { diagnostics.push({ provider: id, state: 'BUDGET_EXHAUSTED' }); break; }
-    const attemptTimeoutMs = Math.min(timeoutMs, remainingMs);
+    const providerTimeoutMs = Math.min(Math.max(Number(process.env.AI_PROVIDER_TIMEOUT_MS || 2500), 1000), 10000);
+    const attemptTimeoutMs = Math.min(timeoutMs, providerTimeoutMs, remainingMs);
     const started = Date.now();
     try { const result = await provider.call(messages, attemptTimeoutMs); diagnostics.push({ provider: id, state: 'RESPONDING', latencyMs: Date.now() - started }); return { ...result, provider: id, diagnostics }; }
     catch (error) { diagnostics.push({ provider: id, state: error?.name === 'AbortError' ? 'TIMEOUT' : error?.status === 429 ? 'RATE_LIMITED' : 'FAILED', status: error?.status || 500, latencyMs: Date.now() - started }); }
