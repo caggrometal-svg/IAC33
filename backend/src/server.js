@@ -14,6 +14,9 @@ const AI_MIN_TIMEOUT_MS = 1_000;
 const AI_MAX_TIMEOUT_MS = 45_000;
 const READY_TIMEOUT_MS = 2_000;
 const DEVICE_ID_PATTERN = /^[A-Za-z0-9._:-]{16,128}$/;
+const COMMAND_LEASE_MS = Math.min(Math.max(Number(process.env.COMMAND_LEASE_MS || 10 * 60 * 1000), 30_000), 60 * 60 * 1000);
+const PAIRING_REQUESTS_PER_MINUTE = Math.min(Math.max(Number(process.env.PAIRING_REQUESTS_PER_MINUTE || 10), 1), 60);
+const pairingWindow = new Map();
 const port = Number(process.env.PORT || 3000);
 const controlToken = process.env.CONTROL_TOKEN || '';
 const devicePairingToken = process.env.DEVICE_PAIRING_TOKEN || '';
@@ -48,6 +51,28 @@ function send(res, status, body) {
 
 function clientKey(req) {
   return String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown').split(',')[0].trim().slice(0, 128);
+}
+
+function pairingAllowed(req) {
+  const key = clientKey(req);
+  const now = Date.now();
+  const recent = (pairingWindow.get(key) || []).filter((time) => now - time < 60_000);
+  if (recent.length >= PAIRING_REQUESTS_PER_MINUTE) return false;
+  recent.push(now);
+  pairingWindow.set(key, recent);
+  if (pairingWindow.size > 5000) for (const [candidate, times] of pairingWindow) if (!times.some((time) => now - time < 60_000)) pairingWindow.delete(candidate);
+  return true;
+}
+
+function validateDevicePublicKey(publicKeyPem) {
+  if (typeof publicKeyPem !== 'string' || publicKeyPem.length < 64 || publicKeyPem.length > 8192) return false;
+  if (!/^-----BEGIN PUBLIC KEY-----[\s\S]+-----END PUBLIC KEY-----\s*$/.test(publicKeyPem)) return false;
+  try {
+    const key = crypto.createPublicKey(publicKeyPem);
+    return key.asymmetricKeyType === 'ec' && key.asymmetricKeyDetails?.namedCurve === 'prime256v1';
+  } catch {
+    return false;
+  }
 }
 
 function aiAllowed(req) {
@@ -148,7 +173,17 @@ async function claimNextCommand(actor = 'worker', deviceId = null) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query("UPDATE commands SET status='EXPIRED', updated_at=now() WHERE status='PENDING' AND expires_at <= now()");
+    const expired = await client.query("SELECT id,status FROM commands WHERE status IN ('PENDING','CLAIMED','EXECUTING') AND expires_at <= now() FOR UPDATE SKIP LOCKED");
+    for (const row of expired.rows) {
+      await client.query("UPDATE commands SET status='EXPIRED', claimed_by=NULL, claimed_at=NULL, updated_at=now() WHERE id=$1", [row.id]);
+      await client.query('INSERT INTO command_audit(command_id,from_status,to_status,actor,detail) VALUES($1,$2,$3,$4,$5)', [row.id, row.status, 'EXPIRED', 'system:expiry', { automatic: true }]);
+    }
+
+    const stale = await client.query("SELECT id,status FROM commands WHERE status IN ('CLAIMED','EXECUTING') AND expires_at > now() AND claimed_at IS NOT NULL AND claimed_at <= now() - ($1 * interval '1 millisecond') FOR UPDATE SKIP LOCKED", [COMMAND_LEASE_MS]);
+    for (const row of stale.rows) {
+      await client.query("UPDATE commands SET status='PENDING', claimed_by=NULL, claimed_at=NULL, updated_at=now() WHERE id=$1", [row.id]);
+      await client.query('INSERT INTO command_audit(command_id,from_status,to_status,actor,detail) VALUES($1,$2,$3,$4,$5)', [row.id, row.status, 'PENDING', 'system:lease-recovery', { automatic: true, leaseMs: COMMAND_LEASE_MS }]);
+    }
     const params = deviceId ? [deviceId] : [];
     const filter = deviceId ? 'AND (target_device_id IS NULL OR target_device_id=$1)' : '';
     const next = await client.query(`SELECT id,type,payload,idempotency_key,expires_at,target_device_id FROM commands WHERE status='PENDING' AND expires_at > now() ${filter} ORDER BY created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1`, params);
