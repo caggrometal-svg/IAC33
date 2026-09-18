@@ -1,375 +1,808 @@
 package cl.iac33.app
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Canvas
-import android.graphics.ColorMatrix
-import android.graphics.ColorMatrixColorFilter
-import android.graphics.Matrix
-import android.graphics.Paint
-import android.media.MediaExtractor
-import android.media.MediaFormat
-import android.media.MediaMuxer
-import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Environment
-import android.widget.MediaController
-import android.widget.VideoView
+import android.provider.MediaStore
+import android.util.Base64
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.content.FileProvider
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.Brightness
+import androidx.media3.effect.Contrast
+import androidx.media3.effect.Crop
+import androidx.media3.effect.RgbAdjustment
+import androidx.media3.effect.RgbFilter
+import androidx.media3.effect.RgbMatrix
+import androidx.media3.effect.TextOverlay
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
+import cl.iac33.app.multimedia.AspectRatio
+import cl.iac33.app.multimedia.ExportRequest
+import cl.iac33.app.multimedia.MediaExportEngine
+import cl.iac33.app.multimedia.MediaFilter
+import cl.iac33.app.multimedia.TextOverlaySpec
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.FileOutputStream
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
+import kotlin.math.min
 
-private data class MediaInfo(
-    val uri: Uri,
-    val mime: String,
-    val durationMs: Long = 0L,
-    val width: Int? = null,
-    val height: Int? = null
+private enum class StudioMode { EDITOR, AI }
+private enum class StudioMediaKind { IMAGE, VIDEO, AUDIO }
+private data class TimelineLayer(
+    val id: Int,
+    val name: String,
+    val kind: StudioMediaKind,
+    val uri: Uri? = null
 )
 
+@OptIn(UnstableApi::class)
 @Composable
 fun MultimediaPanel() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var media by remember { mutableStateOf<MediaInfo?>(null) }
-    var image by remember { mutableStateOf<Bitmap?>(null) }
-    var originalImage by remember { mutableStateOf<Bitmap?>(null) }
-    var startSeconds by remember { mutableFloatStateOf(0f) }
-    var endSeconds by remember { mutableFloatStateOf(1f) }
-    var maxSeconds by remember { mutableFloatStateOf(1f) }
-    var busy by remember { mutableStateOf(false) }
-    var resultText by remember { mutableStateOf<String?>(null) }
+    val engine = remember { MediaExportEngine(context) }
 
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-        val mime = context.contentResolver.getType(uri).orEmpty().ifBlank { "application/octet-stream" }
-        val info = readMediaInfo(context, uri, mime)
-        media = info
-        resultText = null
-        if (mime.startsWith("image/")) {
-            val bitmap = context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
-            originalImage = bitmap
-            image = bitmap
-        } else {
-            image = null
-            maxSeconds = max(1f, info.durationMs / 1000f)
-            startSeconds = 0f
-            endSeconds = maxSeconds
+    var mode by remember { mutableStateOf(StudioMode.EDITOR) }
+    var source by remember { mutableStateOf<Uri?>(null) }
+    var sourceKind by remember { mutableStateOf<StudioMediaKind?>(null) }
+    var audioUri by remember { mutableStateOf<Uri?>(null) }
+    var startMs by remember { mutableLongStateOf(0L) }
+    var endMs by remember { mutableLongStateOf(Long.MAX_VALUE) }
+    var durationMs by remember { mutableLongStateOf(0L) }
+    var brightness by remember { mutableFloatStateOf(0f) }
+    var contrast by remember { mutableFloatStateOf(0f) }
+    var saturation by remember { mutableFloatStateOf(1f) }
+    var speed by remember { mutableFloatStateOf(1f) }
+    var filter by remember { mutableStateOf(MediaFilter.NONE) }
+    var aspect by remember { mutableStateOf(AspectRatio.ORIGINAL) }
+    var overlayText by remember { mutableStateOf("") }
+    var exportBusy by remember { mutableStateOf(false) }
+    var exportProgress by remember { mutableIntStateOf(0) }
+    var status by remember { mutableStateOf("Listo") }
+    var aiPrompt by remember { mutableStateOf("") }
+    var aiBusy by remember { mutableStateOf(false) }
+    var aiResult by remember { mutableStateOf<String?>(null) }
+    var aiMode by remember { mutableStateOf("Imagen") }
+
+    val layers = remember(source, audioUri, overlayText) {
+        buildList {
+            source?.let { add(TimelineLayer(1, "Medio principal", sourceKind ?: StudioMediaKind.VIDEO, it)) }
+            audioUri?.let { add(TimelineLayer(2, "Pista de audio", StudioMediaKind.AUDIO, it)) }
+            if (overlayText.isNotBlank()) add(TimelineLayer(3, "Texto", StudioMediaKind.IMAGE))
         }
     }
 
-    Column(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Column(Modifier.weight(1f)) {
-                Text("Editor Multimedia", style = MaterialTheme.typography.headlineSmall)
-                Text("Edición local de imágenes y recorte de vídeo.", style = MaterialTheme.typography.bodySmall)
-            }
-            Button(onClick = { picker.launch(arrayOf("image/*", "video/*")) }) { Text("Abrir") }
-        }
-        Spacer(Modifier.height(10.dp))
+    val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        source = uri
+        val mime = context.contentResolver.getType(uri).orEmpty()
+        sourceKind = if (mime.startsWith("image/")) StudioMediaKind.IMAGE else StudioMediaKind.VIDEO
+        durationMs = if (sourceKind == StudioMediaKind.VIDEO) readDurationMs(context, uri) else 0L
+        startMs = 0L
+        endMs = if (durationMs > 0L) durationMs else Long.MAX_VALUE
+        status = "Medio cargado"
+    }
 
-        val selected = media
-        if (selected == null) {
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(18.dp)) {
-                    Text("Sin archivo seleccionado", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(6.dp))
-                    Text("Selecciona una foto o vídeo para comenzar.")
-                }
-            }
-        } else {
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp)) {
-                    Text(selected.mime, style = MaterialTheme.typography.labelLarge)
-                    if (selected.durationMs > 0L) {
-                        Text("Duración: " + formatDuration(selected.durationMs))
-                    } else if (selected.width != null && selected.height != null) {
-                        Text("Tamaño: " + selected.width + " × " + selected.height)
-                    }
-                }
-            }
+    val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        audioUri = uri
+        status = "Pista secundaria cargada"
+    }
 
-            Spacer(Modifier.height(10.dp))
-
-            if (selected.mime.startsWith("image/") && image != null) {
-                Image(
-                    bitmap = image!!.asImageBitmap(),
-                    contentDescription = "Vista previa",
-                    modifier = Modifier.fillMaxWidth().height(300.dp)
-                )
-                Spacer(Modifier.height(8.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedButton(onClick = { image = rotateBitmap(image!!) }) { Text("Rotar") }
-                    OutlinedButton(onClick = { image = grayscaleBitmap(image!!) }) { Text("B/N") }
-                    OutlinedButton(onClick = { image = originalImage }) { Text("Reset") }
-                }
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = {
-                        busy = true
-                        scope.launch(Dispatchers.IO) {
-                            val file = saveImage(context, image!!)
-                            withContext(Dispatchers.Main) {
-                                busy = false
-                                resultText = file.absolutePath
-                                shareFile(context, file, "image/png")
-                            }
-                        }
-                    },
-                    enabled = !busy
-                ) { Text(if (busy) "Guardando…" else "Guardar y compartir") }
-            } else if (selected.mime.startsWith("video/")) {
-                var videoReady by remember(selected.uri) { mutableStateOf(false) }
-                var videoError by remember(selected.uri) { mutableStateOf<String?>(null) }
-                Box(Modifier.fillMaxWidth().height(300.dp)) {
-                    AndroidView(
-                        modifier = Modifier.fillMaxSize(),
-                        factory = { ctx ->
-                            VideoView(ctx).apply {
-                                setBackgroundColor(android.graphics.Color.BLACK)
-                                setMediaController(MediaController(ctx))
-                                setVideoURI(selected.uri)
-                                setOnPreparedListener { player ->
-                                    videoReady = true
-                                    videoError = null
-                                    player.isLooping = true
-                                    player.start()
-                                }
-                                setOnErrorListener { _, what, extra ->
-                                    videoReady = false
-                                    videoError = "No se pudo reproducir el vídeo (error $what/$extra)"
-                                    true
-                                }
-                            }
-                        }
-                    )
-                    if (!videoReady && videoError == null) {
-                        CircularProgressIndicator(Modifier.align(Alignment.Center))
-                    }
-                    videoError?.let {
-                        Text(
-                            it,
-                            modifier = Modifier.align(Alignment.Center).padding(12.dp),
-                            style = MaterialTheme.typography.bodySmall
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = mode == StudioMode.EDITOR,
+                            onClick = { mode = StudioMode.EDITOR },
+                            label = { Text("Editor Profesional") }
+                        )
+                        FilterChip(
+                            selected = mode == StudioMode.AI,
+                            onClick = { mode = StudioMode.AI },
+                            label = { Text("Estudio IA") }
                         )
                     }
                 }
-                Spacer(Modifier.height(8.dp))
-                Text("Inicio: " + formatDuration((startSeconds * 1000f).toLong()))
-                Slider(
-                    value = startSeconds,
-                    onValueChange = { value -> startSeconds = value.coerceIn(0f, max(0.1f, endSeconds - 0.1f)) },
-                    valueRange = 0f..max(1f, maxSeconds)
+            )
+        }
+    ) { padding ->
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 10.dp)
+                .navigationBarsPadding()
+        ) {
+            if (mode == StudioMode.EDITOR) {
+                EditorStudio(
+                    context = context,
+                    engine = engine,
+                    source = source,
+                    sourceKind = sourceKind,
+                    audioUri = audioUri,
+                    durationMs = durationMs,
+                    startMs = startMs,
+                    endMs = endMs,
+                    brightness = brightness,
+                    contrast = contrast,
+                    saturation = saturation,
+                    speed = speed,
+                    filter = filter,
+                    aspect = aspect,
+                    overlayText = overlayText,
+                    layers = layers,
+                    exportBusy = exportBusy,
+                    exportProgress = exportProgress,
+                    status = status,
+                    onOpen = { mediaPicker.launch(arrayOf("image/*", "video/*")) },
+                    onAudio = { audioPicker.launch(arrayOf("audio/*")) },
+                    onStartMs = { startMs = it },
+                    onEndMs = { endMs = it },
+                    onBrightness = { brightness = it },
+                    onContrast = { contrast = it },
+                    onSaturation = { saturation = it },
+                    onSpeed = { speed = it },
+                    onFilter = { filter = it },
+                    onAspect = { aspect = it },
+                    onOverlayText = { overlayText = it.take(140) },
+                    onExport = {
+                        val uri = source ?: return@EditorStudio
+                        if (sourceKind == StudioMediaKind.VIDEO) {
+                            exportBusy = true
+                            exportProgress = 5
+                            status = "Exportando vídeo…"
+                            scope.launch {
+                                val result = runCatching {
+                                    engine.exportVideo(
+                                        ExportRequest(
+                                            input = uri,
+                                            startMs = startMs,
+                                            endMs = endMs.takeIf { it != Long.MAX_VALUE },
+                                            speed = speed,
+                                            brightness = brightness,
+                                            contrast = contrast,
+                                            saturation = saturation,
+                                            filter = filter,
+                                            aspect = aspect,
+                                            textOverlay = overlayText.takeIf { it.isNotBlank() }?.let { TextOverlaySpec(it) },
+                                            secondaryAudio = audioUri
+                                        )
+                                    ) { exportProgress = it }
+                                }
+                                exportBusy = false
+                                result.onSuccess {
+                                    status = "Exportado: \${it.displayName}"
+                                    Toast.makeText(context, "Guardado en la galería", Toast.LENGTH_LONG).show()
+                                }.onFailure {
+                                    status = "Error de exportación"
+                                    Toast.makeText(context, it.message ?: "No se pudo exportar", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        } else {
+                            exportBusy = true
+                            status = "Procesando imagen…"
+                            scope.launch {
+                                val result = runCatching {
+                                    engine.saveImage(uri, brightness, contrast, saturation, filter)
+                                }
+                                exportBusy = false
+                                result.onSuccess {
+                                    status = "Exportado: \${it.displayName}"
+                                    Toast.makeText(context, "Imagen guardada en la galería", Toast.LENGTH_LONG).show()
+                                }.onFailure {
+                                    status = "Error de imagen"
+                                    Toast.makeText(context, it.message ?: "No se pudo exportar", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    }
                 )
-                Text("Fin: " + formatDuration((endSeconds * 1000f).toLong()))
-                Slider(
-                    value = endSeconds,
-                    onValueChange = { value -> endSeconds = value.coerceIn(startSeconds + 0.1f, max(startSeconds + 0.1f, maxSeconds)) },
-                    valueRange = 0.1f..max(1f, maxSeconds)
-                )
-                Button(
-                    onClick = {
-                        busy = true
+            } else {
+                AiStudio(
+                    context = context,
+                    prompt = aiPrompt,
+                    aiMode = aiMode,
+                    busy = aiBusy,
+                    result = aiResult,
+                    onPrompt = { aiPrompt = it.take(8000) },
+                    onMode = { aiMode = it },
+                    onGenerate = {
+                        if (aiPrompt.isBlank()) return@AiStudio
+                        aiBusy = true
+                        aiResult = null
                         scope.launch(Dispatchers.IO) {
-                            val res = runCatching {
-                                trimVideo(context, selected.uri, (startSeconds * 1000f).toLong(), (endSeconds * 1000f).toLong())
+                            val result = runCatching {
+                                requestAiStudio(context, aiMode, aiPrompt, source, BuildConfig.IAC33_BACKEND_URL)
                             }
                             withContext(Dispatchers.Main) {
-                                busy = false
-                                res.onSuccess { file ->
-                                    resultText = file.absolutePath
-                                    shareFile(context, file, "video/mp4")
-                                }.onFailure { error -> resultText = "Error: " + (error.message ?: "No se pudo recortar") }
+                                aiBusy = false
+                                result.onSuccess { aiResult = it }
+                                    .onFailure { aiResult = it.message ?: "No se pudo completar la generación" }
                             }
                         }
                     },
-                    enabled = !busy && endSeconds > startSeconds
-                ) { Text(if (busy) "Procesando…" else "Recortar y compartir") }
+                    onImportResult = { generatedUri ->
+                        source = generatedUri
+                        sourceKind = when (context.contentResolver.getType(generatedUri).orEmpty().substringBefore('/')) {
+                            "image" -> StudioMediaKind.IMAGE
+                            "video" -> StudioMediaKind.VIDEO
+                            else -> sourceKind
+                        }
+                        mode = StudioMode.EDITOR
+                        status = "Resultado importado al editor"
+                    }
+                )
             }
+        }
+    }
+}
 
-            resultText?.let {
-                Spacer(Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(Modifier.height(8.dp))
-                Text(it, style = MaterialTheme.typography.bodySmall)
+@OptIn(UnstableApi::class)
+@Composable
+private fun EditorStudio(
+    context: Context,
+    engine: MediaExportEngine,
+    source: Uri?,
+    sourceKind: StudioMediaKind?,
+    audioUri: Uri?,
+    durationMs: Long,
+    startMs: Long,
+    endMs: Long,
+    brightness: Float,
+    contrast: Float,
+    saturation: Float,
+    speed: Float,
+    filter: MediaFilter,
+    aspect: AspectRatio,
+    overlayText: String,
+    layers: List<TimelineLayer>,
+    exportBusy: Boolean,
+    exportProgress: Int,
+    status: String,
+    onOpen: () -> Unit,
+    onAudio: () -> Unit,
+    onStartMs: (Long) -> Unit,
+    onEndMs: (Long) -> Unit,
+    onBrightness: (Float) -> Unit,
+    onContrast: (Float) -> Unit,
+    onSaturation: (Float) -> Unit,
+    onSpeed: (Float) -> Unit,
+    onFilter: (MediaFilter) -> Unit,
+    onAspect: (AspectRatio) -> Unit,
+    onOverlayText: (String) -> Unit,
+    onExport: () -> Unit
+) {
+    var player by remember { mutableStateOf<ExoPlayer?>(null) }
+    DisposableEffect(source, speed) {
+        if (sourceKind == StudioMediaKind.VIDEO && source != null) {
+            player = ExoPlayer.Builder(context).build().apply {
+                setMediaItem(MediaItem.fromUri(source))
+                prepare()
+                playWhenReady = true
+                setPlaybackSpeed(speed)
+            }
+        }
+        onDispose {
+            player?.release()
+            player = null
+        }
+    }
+
+    val previewPlayer = player
+    previewPlayer?.let {
+        it.setPlaybackSpeed(speed)
+        it.setVideoEffects(
+            buildPreviewEffects(brightness, contrast, saturation, filter, aspect, overlayText)
+        )
+    }
+
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Editor Profesional", style = MaterialTheme.typography.headlineSmall)
+                Text(status, style = MaterialTheme.typography.bodySmall)
+            }
+            Button(onClick = onOpen) { Text("Importar") }
+        }
+
+        Card(
+            Modifier.fillMaxWidth().height(230.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                if (previewPlayer != null) {
+                    AndroidView(
+                        Modifier.fillMaxSize(),
+                        factory = { ctx -> PlayerView(ctx).apply { player = previewPlayer; useController = true } },
+                        update = { it.player = previewPlayer }
+                    )
+                } else {
+                    Text("Importa una foto o vídeo", color = Color.White)
+                }
+                if (overlayText.isNotBlank()) {
+                    Text(
+                        overlayText,
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                }
             }
         }
 
-        Spacer(Modifier.height(12.dp))
-        Text("Los archivos se procesan localmente dentro de IAC33.")
+        Row(
+            Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            ToolPill("Luz") { }
+            ToolPill("Color") { }
+            ToolPill("Filtros") { }
+            ToolPill("Recorte") { }
+            ToolPill("Texto") { }
+            ToolPill("Audio") { }
+            ToolPill("Velocidad") { }
+        }
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Línea de tiempo · \${formatDuration(durationMs)}", style = MaterialTheme.typography.titleMedium)
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    layers.forEach { layer ->
+                        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))) {
+                            Column(Modifier.padding(10.dp)) {
+                                Text(layer.name, color = Color.White)
+                                Text(layer.kind.name, color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
+                if (durationMs > 0L) {
+                    Text("Inicio \${formatDuration(startMs)}")
+                    Slider(
+                        value = startMs.toFloat(),
+                        onValueChange = { onStartMs(it.toLong().coerceIn(0L, max(0L, endMs - 100L))) },
+                        valueRange = 0f..durationMs.toFloat()
+                    )
+                    Text("Fin \${formatDuration(endMs.coerceAtMost(durationMs))}")
+                    Slider(
+                        value = endMs.toFloat().coerceAtMost(durationMs.toFloat()),
+                        onValueChange = { onEndMs(it.toLong().coerceIn(startMs + 100L, durationMs)) },
+                        valueRange = 0f..durationMs.toFloat()
+                    )
+                }
+            }
+        }
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Imagen", style = MaterialTheme.typography.titleMedium)
+                LabeledSlider("Brillo", brightness, -1f..1f, onBrightness)
+                LabeledSlider("Contraste", contrast, -1f..1f, onContrast)
+                LabeledSlider("Saturación", saturation, 0f..3f, onSaturation)
+
+                Text("Filtros")
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(
+                        MediaFilter.NONE,
+                        MediaFilter.BW,
+                        MediaFilter.SEPIA,
+                        MediaFilter.VINTAGE,
+                        MediaFilter.CYBERPUNK
+                    ).forEach { candidate ->
+                        FilterChip(
+                            selected = filter == candidate,
+                            onClick = { onFilter(candidate) },
+                            label = { Text(candidate.name) }
+                        )
+                    }
+                }
+
+                Text("Formato")
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    AspectRatio.values().forEach { candidate ->
+                        FilterChip(
+                            selected = aspect == candidate,
+                            onClick = { onAspect(candidate) },
+                            label = { Text(candidate.label) }
+                        )
+                    }
+                }
+
+                Text("Velocidad")
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(0.25f, 0.5f, 1f, 2f, 4f).forEach { candidate ->
+                        FilterChip(
+                            selected = speed == candidate,
+                            onClick = { onSpeed(candidate) },
+                            label = { Text("\${candidate}x") }
+                        )
+                    }
+                }
+
+                OutlinedTextField(
+                    value = overlayText,
+                    onValueChange = onOverlayText,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Texto superpuesto") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text)
+                )
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onAudio) { Text(if (audioUri == null) "Añadir audio" else "Cambiar audio") }
+                    Button(onClick = onExport, enabled = source != null && !exportBusy) {
+                        Text(if (exportBusy) "Exportando \${exportProgress}%" else "Exportar a galería")
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Procesamiento local · Media3 Transformer · exportación MP4/AAC",
+            style = MaterialTheme.typography.labelSmall
+        )
     }
 }
 
-private fun decodeBitmapForPreview(context: Context, uri: Uri): Bitmap? {
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-
-    var sample = 1
-    while (bounds.outWidth / sample > 1600 || bounds.outHeight / sample > 1600) sample *= 2
-    val options = BitmapFactory.Options().apply {
-        inSampleSize = sample
-        inPreferredConfig = Bitmap.Config.ARGB_8888
+@OptIn(UnstableApi::class)
+private fun buildPreviewEffects(
+    brightness: Float,
+    contrast: Float,
+    saturation: Float,
+    filter: MediaFilter,
+    aspect: AspectRatio,
+    text: String
+): List<androidx.media3.common.Effect> {
+    val effects = mutableListOf<androidx.media3.common.Effect>()
+    if (brightness != 0f) effects += Brightness(brightness.coerceIn(-1f, 1f))
+    if (contrast != 0f) effects += Contrast(contrast.coerceIn(-1f, 1f))
+    if (saturation != 1f) {
+        val v = saturation.coerceIn(0f, 3f)
+        effects += RgbAdjustment.Builder().setRedScale(v).setGreenScale(v).setBlueScale(v).build()
     }
-    return context.contentResolver.openInputStream(uri)?.use {
-        BitmapFactory.decodeStream(it, null, options)
+    when (filter) {
+        MediaFilter.BW -> effects += RgbFilter.createGrayscaleFilter()
+        MediaFilter.SEPIA -> effects += RgbMatrix { _, _ -> floatArrayOf(
+            0.393f, 0.769f, 0.189f, 0f,
+            0.349f, 0.686f, 0.168f, 0f,
+            0.272f, 0.534f, 0.131f, 0f,
+            0f, 0f, 0f, 1f
+        ) }
+        MediaFilter.VINTAGE -> effects += RgbMatrix { _, _ -> floatArrayOf(
+            0.86f, 0.10f, 0.05f, 0f,
+            0.05f, 0.82f, 0.08f, 0f,
+            0.03f, 0.10f, 0.72f, 0f,
+            0f, 0f, 0f, 1f
+        ) }
+        MediaFilter.CYBERPUNK -> effects += RgbMatrix { _, _ -> floatArrayOf(
+            0.72f, 0.05f, 0.18f, 0f,
+            0.03f, 0.82f, 0.20f, 0f,
+            0.18f, 0.08f, 0.92f, 0f,
+            0f, 0f, 0f, 1f
+        ) }
+        MediaFilter.NONE -> Unit
+    }
+    when (aspect) {
+        AspectRatio.ORIGINAL -> Unit
+        AspectRatio.PORTRAIT -> effects += Crop(-0.56f, 0.56f, -1f, 1f)
+        AspectRatio.LANDSCAPE -> effects += Crop(-1f, 1f, -0.5625f, 0.5625f)
+        AspectRatio.SQUARE -> effects += Crop(-1f, 1f, -1f, 1f)
+    }
+    if (text.isNotBlank()) effects += TextOverlay.createStaticTextOverlay(android.text.SpannableString(text))
+    return effects
+}
+
+private fun LabeledSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, onValue: (Float) -> Unit) {
+    Text("\$label: \${String.format("%.2f", value)}")
+    Slider(value = value, onValueChange = onValue, valueRange = range)
+}
+
+@Composable
+private fun ToolPill(label: String, onClick: () -> Unit) {
+    OutlinedButton(onClick = onClick, modifier = Modifier.width(96.dp)) {
+        Text(label)
     }
 }
 
-private fun readMediaInfo(context: Context, uri: Uri, mime: String): MediaInfo {
-    if (!mime.startsWith("video/")) {
-        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
-        return MediaInfo(uri, mime, width = options.outWidth.takeIf { it > 0 }, height = options.outHeight.takeIf { it > 0 })
+@Composable
+private fun AiStudio(
+    context: Context,
+    prompt: String,
+    aiMode: String,
+    busy: Boolean,
+    result: String?,
+    onPrompt: (String) -> Unit,
+    onMode: (String) -> Unit,
+    onGenerate: () -> Unit,
+    onImportResult: (Uri) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val modes = listOf("Imagen", "Imagen→Imagen", "Vídeo", "Imagen→Vídeo", "TTS")
+
+    Column(
+        Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text("Estudio IA", style = MaterialTheme.typography.headlineSmall)
+        Text(
+            "Generación remota desacoplada del editor local. Los proveedores se mantienen en el backend.",
+            style = MaterialTheme.typography.bodySmall
+        )
+        Row(
+            Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            modes.forEach {
+                FilterChip(selected = aiMode == it, onClick = { onMode(it) }, label = { Text(it) })
+            }
+        }
+        OutlinedTextField(
+            value = prompt,
+            onValueChange = onPrompt,
+            modifier = Modifier.fillMaxWidth().height(140.dp),
+            label = { Text(if (aiMode == "TTS") "Texto" else "Prompt") }
+        )
+        Button(onClick = onGenerate, enabled = prompt.isNotBlank() && !busy) {
+            Text(if (busy) "Generando…" else "Generar")
+        }
+        result?.let {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("Resultado", style = MaterialTheme.typography.titleMedium)
+                    Text(it)
+                    val maybeUrl = extractAssetUrl(it, BuildConfig.IAC33_BACKEND_URL)
+                    if (maybeUrl != null) {
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    val uri = downloadAssetToGallery(context, maybeUrl)
+                                    if (uri != null) onImportResult(uri)
+                                }
+                            }
+                        ) { Text("Guardar / importar") }
+                    }
+                }
+            }
+        }
     }
-    val retriever = MediaMetadataRetriever()
+}
+
+private suspend fun requestAiStudio(
+    context: Context,
+    mode: String,
+    prompt: String,
+    source: Uri?,
+    backend: String
+): String = withContext(Dispatchers.IO) {
+    val endpoint = when (mode) {
+        "Imagen" -> "/v1/ai/text-to-image"
+        "Imagen→Imagen" -> "/v1/ai/image-to-image"
+        "Vídeo" -> "/v1/ai/text-to-video"
+        "Imagen→Vídeo" -> "/v1/ai/image-to-video"
+        "TTS" -> "/v1/ai/text-to-speech"
+        else -> error("Modo IA no soportado")
+    }
+
+    val json = JSONObject().apply {
+        when (mode) {
+            "TTS" -> put("text", prompt)
+            else -> put("prompt", prompt)
+        }
+        if (mode.contains("Imagen") && mode != "Imagen" && source != null) {
+            put("image", uriAsDataUri(context, source))
+        }
+        if (mode.contains("Vídeo")) {
+            put("ratio", "1280:720")
+            put("duration", 5)
+        }
+    }
+
+    val response = postJson(backend.trimEnd('/') + endpoint, json.toString())
+    if (response.status !in 200..299) error(response.body)
+    if (mode == "Vídeo" || mode == "Imagen→Vídeo") {
+        val initial = JSONObject(response.body)
+        val jobId = initial.getString("jobId")
+        return@withContext pollMediaJob(backend, jobId)
+    }
+    response.body
+}
+
+private data class HttpResponse(val status: Int, val body: String)
+
+private fun postJson(url: String, body: String): HttpResponse {
+    val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+        requestMethod = "POST"
+        connectTimeout = 10_000
+        readTimeout = 60_000
+        doOutput = true
+        setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        setRequestProperty("Accept", "application/json")
+        setRequestProperty("User-Agent", "IAC33/2.0 Android")
+    }
+    return try {
+        connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+        HttpResponse(connection.responseCode, (if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream).bufferedReader().use { it.readText() })
+    } finally {
+        connection.disconnect()
+    }
+}
+
+private fun pollMediaJob(backend: String, jobId: String): String {
+    repeat(96) {
+        val connection = (URL(backend.trimEnd('/') + "/v1/ai/media/jobs/" + Uri.encode(jobId)).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 10_000
+            readTimeout = 20_000
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", "IAC33/2.0 Android")
+        }
+        val body = try {
+            val stream = if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
+            stream.bufferedReader().use { it.readText() }
+        } finally {
+            connection.disconnect()
+        }
+        val json = JSONObject(body)
+        when (json.optString("status").uppercase()) {
+            "SUCCEEDED" -> return backend.trimEnd('/') + json.optString("assetUrl")
+            "FAILED" -> error("La generación de vídeo falló")
+        }
+        Thread.sleep(5_000L)
+    }
+    error("Tiempo de espera agotado")
+}
+
+private fun uriAsDataUri(context: Context, uri: Uri): String {
+    val mime = context.contentResolver.getType(uri).orEmpty().ifBlank { "image/png" }
+    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        ?: error("No se pudo leer la imagen")
+    require(bytes.size <= 12 * 1024 * 1024) { "La imagen supera 12 MB" }
+    return "data:\${mime};base64,\${Base64.encodeToString(bytes, Base64.NO_WRAP)}"
+}
+
+private suspend fun downloadAssetToGallery(context: Context, url: String): Uri? = withContext(Dispatchers.IO) {
+    val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+        requestMethod = "GET"
+        connectTimeout = 10_000
+        readTimeout = 90_000
+        setRequestProperty("Accept", "*/*")
+        setRequestProperty("User-Agent", "IAC33/2.0 Android")
+    }
+    try {
+        if (connection.responseCode !in 200..299) return@withContext null
+        val mime = connection.contentType.orEmpty().substringBefore(';').ifBlank { "application/octet-stream" }
+        val isVideo = mime.startsWith("video/")
+        val collection = if (isVideo) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        val name = "IAC33_AI_\${System.currentTimeMillis()}" + if (isVideo) ".mp4" else ".png"
+        val values = ContentValues().apply {
+            if (isVideo) {
+                put(MediaStore.Video.Media.DISPLAY_NAME, name)
+                put(MediaStore.Video.Media.MIME_TYPE, if (mime == "application/octet-stream") "video/mp4" else mime)
+                put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/IAC33")
+            } else {
+                put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                put(MediaStore.Images.Media.MIME_TYPE, if (mime == "application/octet-stream") "image/png" else mime)
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/IAC33")
+            }
+        }
+        val uri = context.contentResolver.insert(collection, values) ?: return@withContext null
+        try {
+            context.contentResolver.openOutputStream(uri)?.use { output ->
+                connection.inputStream.use { input -> input.copyTo(output) }
+            } ?: error("No se pudo guardar el resultado")
+            uri
+        } catch (error: Throwable) {
+            context.contentResolver.delete(uri, null, null)
+            throw error
+        }
+    } finally {
+        connection.disconnect()
+    }
+}
+
+private fun extractAssetUrl(body: String, backend: String): String? {
+    return runCatching {
+        val json = JSONObject(body)
+        val assetUrl = json.optString("assetUrl")
+        if (assetUrl.isBlank()) null
+        else if (assetUrl.startsWith("http")) assetUrl else backend.trimEnd('/') + assetUrl
+    }.getOrNull()
+}
+
+private fun readDurationMs(context: Context, uri: Uri): Long {
+    val retriever = android.media.MediaMetadataRetriever()
     return try {
         retriever.setDataSource(context, uri)
-        MediaInfo(
-            uri = uri,
-            mime = mime,
-            durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L,
-            width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull(),
-            height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull()
-        )
+        retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
     } finally {
         retriever.release()
     }
 }
 
-private fun rotateBitmap(bitmap: Bitmap): Bitmap {
-    val matrix = Matrix().apply { postRotate(90f) }
-    return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-}
-
-private fun grayscaleBitmap(bitmap: Bitmap): Bitmap {
-    val output = Bitmap.createBitmap(bitmap.width, bitmap.height, bitmap.config ?: Bitmap.Config.ARGB_8888)
-    Canvas(output).drawBitmap(
-        bitmap,
-        0f,
-        0f,
-        Paint().apply { colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(0f) }) }
-    )
-    return output
-}
-
-private fun saveImage(context: Context, bitmap: Bitmap): File {
-    val dir = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: context.filesDir
-    dir.mkdirs()
-    val file = File(dir, "IAC33_" + System.currentTimeMillis() + ".png")
-    FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-    return file
-}
-
-private fun trimVideo(context: Context, uri: Uri, startMs: Long, endMs: Long): File {
-    val dir = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: context.filesDir
-    dir.mkdirs()
-    val output = File(dir, "IAC33_" + System.currentTimeMillis() + ".mp4")
-    val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: error("No se pudo abrir el vídeo")
-    val extractor = MediaExtractor()
-    val muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-    try {
-        pfd.use { descriptor ->
-            extractor.setDataSource(descriptor.fileDescriptor)
-            val tracks = mutableListOf<Pair<Int, Int>>()
-            for (i in 0 until extractor.trackCount) {
-                val format = extractor.getTrackFormat(i)
-                val mime = format.getString(MediaFormat.KEY_MIME).orEmpty()
-                if (mime.startsWith("video/") || mime.startsWith("audio/")) tracks += i to muxer.addTrack(format)
-            }
-            check(tracks.isNotEmpty()) { "El vídeo no contiene pistas compatibles" }
-            muxer.start()
-            val info = android.media.MediaCodec.BufferInfo()
-            for ((sourceTrack, muxTrack) in tracks) {
-                extractor.unselectTrack(sourceTrack)
-                extractor.selectTrack(sourceTrack)
-                extractor.seekTo(startMs * 1000L, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
-                val trackFormat = extractor.getTrackFormat(sourceTrack)
-                val maxInputSize = if (trackFormat.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
-                    trackFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE).coerceAtLeast(1024 * 1024)
-                } else {
-                    8 * 1024 * 1024
-                }
-                val buffer = java.nio.ByteBuffer.allocate(maxInputSize)
-                while (true) {
-                    val size = extractor.readSampleData(buffer, 0)
-                    val time = extractor.sampleTime
-                    if (size < 0 || time > endMs * 1000L) break
-                    if (time >= startMs * 1000L) {
-                        info.offset = 0
-                        info.size = size
-                        info.presentationTimeUs = time - startMs * 1000L
-                        info.flags = extractor.sampleFlags
-                        muxer.writeSampleData(muxTrack, buffer, info)
-                    }
-                    extractor.advance()
-                }
-                extractor.unselectTrack(sourceTrack)
-            }
-            muxer.stop()
-        }
-    } catch (error: Throwable) {
-        runCatching { muxer.stop() }
-        output.delete()
-        throw error
-    } finally {
-        extractor.release()
-        muxer.release()
-    }
-    return output
-}
-
-private fun shareFile(context: Context, file: File, mime: String) {
-    val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
-    val intent = Intent(Intent.ACTION_SEND).apply {
-        type = mime
-        putExtra(Intent.EXTRA_STREAM, uri)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    }
-    context.startActivity(Intent.createChooser(intent, "Compartir archivo IAC33"))
-}
-
 private fun formatDuration(ms: Long): String {
-    val total = max(0L, ms) / 1000L
-    return "%02d:%02d".format(total / 60L, total % 60L)
+    val seconds = max(0L, ms) / 1000L
+    return "%02d:%02d".format(seconds / 60L, seconds % 60L)
 }
