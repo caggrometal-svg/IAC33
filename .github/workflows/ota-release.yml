@@ -1,4 +1,5 @@
 name: IAC33 OTA Release
+# OTA delivery hardening: preserve actionable HTTP/auth diagnostics.
 
 on:
   push:
