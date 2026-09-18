@@ -129,7 +129,7 @@ jobs:
           BASE_VERSION_CODE="$(sed -n 's/.*versionCode = providers.gradleProperty("IAC33_VERSION_CODE").orElse("\([0-9]*\)").get().toInt()/\1/p' app/build.gradle.kts | head -n1)"
           if [ -z "$BASE_VERSION_CODE" ]; then BASE_VERSION_CODE="$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' app/build.gradle.kts | head -n1)"; fi
           test -n "$BASE_VERSION_CODE"
-          OTA_VERSION_CODE="$((BASE_VERSION_CODE * 100000 + GITHUB_RUN_NUMBER))"
+          OTA_VERSION_CODE="$((BASE_VERSION_CODE + GITHUB_RUN_NUMBER))"
           OTA_VERSION_NAME="$VMAJOR.$VMINOR.$VPATCH.$GITHUB_RUN_NUMBER"
           BOOTSTRAP_VERSION="$(sed -n 's/^IAC33_OTA_BOOTSTRAP_VERSION=//p' gradle.properties | head -n1)"
           if [ "$OTA_BOOTSTRAP" = "1" ] && [ -z "$BOOTSTRAP_VERSION" ]; then
