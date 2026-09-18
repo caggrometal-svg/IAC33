@@ -26,10 +26,15 @@ test('returns first responding provider with diagnostics', async () => {
   assert.deepEqual(result.diagnostics[0].state, 'RESPONDING');
 });
 
-test('uses keyless Animica first in the default free pool', async () => {
+test('uses keyless Animica only after configured providers are skipped in the default free pool', async () => {
   delete process.env.AI_PROVIDER_ORDER;
   delete process.env.ANIMICA_MODEL;
   delete process.env.OPENROUTER_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  delete process.env.CLOUDFLARE_API_TOKEN;
+  delete process.env.CLOUDFLARE_ACCOUNT_ID;
+  delete process.env.GROQ_API_KEY;
+  delete process.env.FREEINFERENCE_API_KEY;
   let requestedUrl = '';
   let requestedBody = null;
   let authorization;
