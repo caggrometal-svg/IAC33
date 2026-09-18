@@ -544,28 +544,28 @@ private fun buildPreviewEffects(
     height: Int
 ): List<androidx.media3.common.Effect> {
     val effects = mutableListOf<androidx.media3.common.Effect>()
-    if (brightness != 0f) effects += Brightness(brightness.coerceIn(-1f, 1f))
-    if (contrast != 0f) effects += Contrast(contrast.coerceIn(-1f, 1f))
+    if (brightness != 0f) effects.add Brightness(brightness.coerceIn(-1f, 1f))
+    if (contrast != 0f) effects.add Contrast(contrast.coerceIn(-1f, 1f))
     if (saturation != 1f) {
-        effects += HslAdjustment.Builder()
+        effects.add HslAdjustment.Builder()
             .adjustSaturation(((saturation - 1f) * 100f).coerceIn(-100f, 100f))
             .build()
     }
     when (filter) {
-        MediaFilter.BW -> effects += RgbFilter.createGrayscaleFilter()
-        MediaFilter.SEPIA -> effects += RgbMatrix { _, _ -> floatArrayOf(
+        MediaFilter.BW -> effects.add RgbFilter.createGrayscaleFilter()
+        MediaFilter.SEPIA -> effects.add RgbMatrix { _, _ -> floatArrayOf(
             0.393f, 0.769f, 0.189f, 0f,
             0.349f, 0.686f, 0.168f, 0f,
             0.272f, 0.534f, 0.131f, 0f,
             0f, 0f, 0f, 1f
         ) }
-        MediaFilter.VINTAGE -> effects += RgbMatrix { _, _ -> floatArrayOf(
+        MediaFilter.VINTAGE -> effects.add RgbMatrix { _, _ -> floatArrayOf(
             0.86f, 0.10f, 0.05f, 0f,
             0.05f, 0.82f, 0.08f, 0f,
             0.03f, 0.10f, 0.72f, 0f,
             0f, 0f, 0f, 1f
         ) }
-        MediaFilter.CYBERPUNK -> effects += RgbMatrix { _, _ -> floatArrayOf(
+        MediaFilter.CYBERPUNK -> effects.add RgbMatrix { _, _ -> floatArrayOf(
             0.72f, 0.05f, 0.18f, 0f,
             0.03f, 0.82f, 0.20f, 0f,
             0.18f, 0.08f, 0.92f, 0f,
@@ -575,11 +575,11 @@ private fun buildPreviewEffects(
     }
     when (aspect) {
         AspectRatio.ORIGINAL -> Unit
-        AspectRatio.PORTRAIT -> effects += centerCropForRatio(width, height, 9f / 16f)
-        AspectRatio.LANDSCAPE -> effects += centerCropForRatio(width, height, 16f / 9f)
-        AspectRatio.SQUARE -> effects += centerCropForRatio(width, height, 1f)
+        AspectRatio.PORTRAIT -> effects.add centerCropForRatio(width, height, 9f / 16f)
+        AspectRatio.LANDSCAPE -> effects.add centerCropForRatio(width, height, 16f / 9f)
+        AspectRatio.SQUARE -> effects.add centerCropForRatio(width, height, 1f)
     }
-    if (text.isNotBlank()) effects += TextOverlay.createStaticTextOverlay(
+    if (text.isNotBlank()) effects.add TextOverlay.createStaticTextOverlay(
         android.text.SpannableString(text).apply {
             setSpan(
                 android.text.style.ForegroundColorSpan(android.graphics.Color.WHITE),
