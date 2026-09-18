@@ -19,6 +19,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.effect.Brightness
 import androidx.media3.effect.Contrast
+import androidx.media3.effect.HslAdjustment
 import androidx.media3.effect.Crop
 import androidx.media3.effect.RgbAdjustment
 import androidx.media3.effect.RgbFilter
@@ -194,11 +195,8 @@ class MediaExportEngine(private val context: Context) {
         if (request.brightness != 0f) effects += Brightness(request.brightness.coerceIn(-1f, 1f))
         if (request.contrast != 0f) effects += Contrast(request.contrast.coerceIn(-1f, 1f))
         if (request.saturation != 1f) {
-            val value = request.saturation.coerceIn(0f, 3f)
-            effects += RgbAdjustment.Builder()
-                .setRedScale(value)
-                .setGreenScale(value)
-                .setBlueScale(value)
+            effects += HslAdjustment.Builder()
+                .adjustSaturation(((request.saturation - 1f) * 100f).coerceIn(-100f, 100f))
                 .build()
         }
         when (request.filter) {
@@ -208,16 +206,45 @@ class MediaExportEngine(private val context: Context) {
             MediaFilter.CYBERPUNK -> effects += RgbMatrix { _, _ -> cyberpunkMatrix() }
             MediaFilter.NONE -> Unit
         }
+        val (width, height) = readVideoSize(request.input)
         when (request.aspect) {
             AspectRatio.ORIGINAL -> Unit
-            AspectRatio.PORTRAIT -> effects += Crop(-0.56f, 0.56f, -1f, 1f)
-            AspectRatio.LANDSCAPE -> effects += Crop(-1f, 1f, -0.5625f, 0.5625f)
-            AspectRatio.SQUARE -> effects += Crop(-1f, 1f, -1f, 1f)
+            AspectRatio.PORTRAIT -> effects += centerCropForRatio(width, height, 9f / 16f)
+            AspectRatio.LANDSCAPE -> effects += centerCropForRatio(width, height, 16f / 9f)
+            AspectRatio.SQUARE -> effects += centerCropForRatio(width, height, 1f)
         }
         request.textOverlay?.takeIf { it.text.isNotBlank() }?.let {
-            effects += TextOverlay.createStaticTextOverlay(android.text.SpannableString(it.text))
+            val styled = android.text.SpannableString(it.text).apply {
+                setSpan(android.text.style.AbsoluteSizeSpan(it.fontSizeSp, true), 0, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                setSpan(android.text.style.ForegroundColorSpan(android.graphics.Color.WHITE), 0, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            effects += TextOverlay.createStaticTextOverlay(styled)
         }
         return effects
+    }
+
+    private fun readVideoSize(uri: Uri): Pair<Int, Int> {
+        val retriever = android.media.MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(context, uri)
+            val width = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+            val height = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+            width to height
+        } finally {
+            retriever.release()
+        }
+    }
+
+    private fun centerCropForRatio(width: Int, height: Int, targetRatio: Float): Crop {
+        if (width <= 0 || height <= 0) return Crop(-1f, 1f, -1f, 1f)
+        val sourceRatio = width.toFloat() / height.toFloat()
+        return if (sourceRatio > targetRatio) {
+            val halfWidth = (targetRatio / sourceRatio).coerceIn(0.05f, 1f)
+            Crop(-halfWidth, halfWidth, -1f, 1f)
+        } else {
+            val halfHeight = (sourceRatio / targetRatio).coerceIn(0.05f, 1f)
+            Crop(-1f, 1f, -halfHeight, halfHeight)
+        }
     }
 
     private fun decodeBitmap(uri: Uri): Bitmap? {
