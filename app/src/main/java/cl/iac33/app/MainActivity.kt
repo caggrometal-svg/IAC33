@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -81,6 +82,7 @@ data class ChatLine(val role: String, val text: String)
 private val sections = listOf("IA", "Sismos", "C33", "Red", "GPS", "Multimedia", "Control", "Config")
 private val sectionGlyphs = listOf("AI", "EQ", "C33", "NET", "GPS", "MED", "CTL", "CFG")
 
+@OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
     private val locationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
