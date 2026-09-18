@@ -30,6 +30,20 @@ class OtaPipeline(private val publicKeyBase64: String) {
         return Result.success(state)
     }
 
+    fun verifyAndStage(manifest: OtaManifest, artifact: java.io.File): Result<OtaState> {
+        state = OtaState(manifest.releaseId, OtaStage.CHECK, state.releaseId)
+        if (!manifest.isContractValid()) return fail("Invalid OTA manifest contract")
+        state = state.copy(stage = OtaStage.DOWNLOAD)
+        state = state.copy(stage = OtaStage.SIZE_CHECK)
+        if (!OtaVerifier.verifySize(artifact, manifest.artifactSize)) return fail("OTA artifact size mismatch")
+        state = state.copy(stage = OtaStage.DIGEST_CHECK)
+        if (!OtaVerifier.verifyDigest(artifact, manifest.artifactSha256)) return fail("OTA artifact digest mismatch")
+        state = state.copy(stage = OtaStage.SIGNATURE_CHECK)
+        if (!artifact.inputStream().buffered().use { OtaVerifier.verifySignature(it, manifest.signatureBase64, publicKeyBase64) }) return fail("OTA artifact signature invalid")
+        state = state.copy(stage = OtaStage.STAGE)
+        return Result.success(state)
+    }
+
     fun markSelfTestPassed(): Result<OtaState> {
         if (state.stage != OtaStage.STAGE) return Result.failure(IllegalStateException("OTA self-test out of order"))
         state = state.copy(stage = OtaStage.SELF_TEST)
