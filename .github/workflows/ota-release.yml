@@ -1,0 +1,144 @@
+name: IAC33 OTA Release
+
+on:
+  push:
+    paths:
+      - 'app/**'
+      - '.github/workflows/ota-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ota-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Build signed release APK
+        env:
+          KEYSTORE_PATH: ${{ runner.temp }}/iac33-release.keystore
+          KEYSTORE_B64: ${{ secrets.IAC33_ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.IAC33_ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.IAC33_ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.IAC33_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -eu
+          test -n "$KEYSTORE_B64"
+          test -n "$KEYSTORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE_PATH"
+          keytool -list -keystore "$KEYSTORE_PATH" -storepass "$KEYSTORE_PASSWORD" >/dev/null
+          gradle assembleRelease --no-daemon --stacktrace --console=plain             -Pandroid.injected.signing.store.file="$KEYSTORE_PATH"             -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD"             -Pandroid.injected.signing.key.alias="$KEY_ALIAS"             -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+          test -s app/build/outputs/apk/release/app-release.apk
+
+      - name: Sign OTA artifact
+        env:
+          BRIDGE_KEY_B64: ${{ secrets.BRIDGE_ECDSA_PRIVATE_KEY_B64 }}
+        run: |
+          set -eu
+          test -n "$BRIDGE_KEY_B64"
+          printf '%s' "$BRIDGE_KEY_B64" | base64 --decode > "$RUNNER_TEMP/bridge-key.bin"
+          if openssl pkey -in "$RUNNER_TEMP/bridge-key.bin" -out "$RUNNER_TEMP/bridge-key.pem" 2>/dev/null; then
+            :
+          elif openssl pkey -inform DER -in "$RUNNER_TEMP/bridge-key.bin" -out "$RUNNER_TEMP/bridge-key.pem" 2>/dev/null; then
+            :
+          else
+            echo "BRIDGE_ECDSA_PRIVATE_KEY_B64 must decode to PEM or DER EC private key" >&2
+            exit 1
+          fi
+          openssl pkey -in "$RUNNER_TEMP/bridge-key.pem" -text -noout >/dev/null
+          openssl dgst -sha256 -sign "$RUNNER_TEMP/bridge-key.pem"             app/build/outputs/apk/release/app-release.apk > "$RUNNER_TEMP/ota-signature.bin"
+          base64 -w0 "$RUNNER_TEMP/ota-signature.bin" > "$RUNNER_TEMP/ota-signature.b64"
+          sha256sum app/build/outputs/apk/release/app-release.apk | cut -d' ' -f1 > "$RUNNER_TEMP/ota-sha256"
+          stat -c '%s' app/build/outputs/apk/release/app-release.apk > "$RUNNER_TEMP/ota-size"
+
+      - name: Create GitHub release and manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          VERSION_NAME="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n1)"
+          test -n "$VERSION_NAME"
+          TAG="ota-$VERSION_NAME-$GITHUB_RUN_NUMBER"
+          RELEASE_ID="$TAG"
+          ARTIFACT_NAME="iac33-$TAG.apk"
+          cp app/build/outputs/apk/release/app-release.apk "$ARTIFACT_NAME"
+          ARTIFACT_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$ARTIFACT_NAME"
+          CREATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          SHA256="$(cat "$RUNNER_TEMP/ota-sha256")"
+          SIZE="$(cat "$RUNNER_TEMP/ota-size")"
+          SIGNATURE="$(cat "$RUNNER_TEMP/ota-signature.b64")"
+          jq -n             --arg releaseId "$RELEASE_ID"             --arg appVersion "$VERSION_NAME"             --arg createdAt "$CREATED_AT"             --arg artifactRef "$ARTIFACT_URL"             --arg sha "$SHA256"             --argjson size "$SIZE"             --arg signature "$SIGNATURE"             '{
+              schemaVersion:1,
+              releaseId:$releaseId,
+              appVersion:$appVersion,
+              createdAt:$createdAt,
+              minimumSupportedVersion:"0.1.0",
+              artifactRef:$artifactRef,
+              artifactSha256:$sha,
+              artifactSize:$size,
+              algorithm:"SHA256withECDSA",
+              signatureBase64:$signature,
+              keyId:"iac33-bridge-ecdsa-v1",
+              rollbackRef:$artifactRef
+            }' > manifest.json
+          gh release create "$TAG" "$ARTIFACT_NAME" manifest.json             --title "IAC33 OTA $VERSION_NAME"             --notes "Signed OTA release for IAC33 commit $GITHUB_SHA."
+
+      - name: Queue OTA command to IAC33 backend
+        env:
+          CONTROL_TOKEN: ${{ secrets.CONTROL_TOKEN }}
+          BACKEND_URL: https://iac33-backend.onrender.com
+        run: |
+          set -eu
+          test -n "$CONTROL_TOKEN"
+          VERSION_NAME="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n1)"
+          TAG="ota-$VERSION_NAME-$GITHUB_RUN_NUMBER"
+          ARTIFACT_NAME="iac33-$TAG.apk"
+          ARTIFACT_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$ARTIFACT_NAME"
+          CREATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          EXPIRES_AT="$(date -u -d '+24 hours' +%Y-%m-%dT%H:%M:%SZ)"
+          SHA256="$(cat "$RUNNER_TEMP/ota-sha256")"
+          SIZE="$(cat "$RUNNER_TEMP/ota-size")"
+          SIGNATURE="$(cat "$RUNNER_TEMP/ota-signature.b64")"
+          COMMAND_ID="ota-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          IDEMPOTENCY="ota-$GITHUB_SHA"
+          IDEMPOTENCY="$IDEMPOTENCY:0:40"
+          jq -n             --arg id "$COMMAND_ID"             --arg type "OTA_INSTALL"             --arg idempotencyKey "$IDEMPOTENCY"             --arg expiresAt "$EXPIRES_AT"             --arg releaseId "$TAG"             --arg appVersion "$VERSION_NAME"             --arg createdAt "$CREATED_AT"             --arg artifactRef "$ARTIFACT_URL"             --arg sha "$SHA256"             --argjson size "$SIZE"             --arg signature "$SIGNATURE"             '{
+              id:$id,
+              type:$type,
+              idempotencyKey:$idempotencyKey,
+              expiresAt:$expiresAt,
+              payload:{
+                manifest:{
+                  schemaVersion:1,
+                  releaseId:$releaseId,
+                  appVersion:$appVersion,
+                  createdAt:$createdAt,
+                  minimumSupportedVersion:"0.1.0",
+                  artifactRef:$artifactRef,
+                  artifactSha256:$sha,
+                  artifactSize:$size,
+                  algorithm:"SHA256withECDSA",
+                  signatureBase64:$signature,
+                  keyId:"iac33-bridge-ecdsa-v1",
+                  rollbackRef:$artifactRef
+                }
+              }
+            }' > ota-command.json
+          curl --fail-with-body --silent --show-error             -H "Authorization: Bearer $CONTROL_TOKEN"             -H "Content-Type: application/json"             --data-binary @ota-command.json             "$BACKEND_URL/v1/gpt/commands"
