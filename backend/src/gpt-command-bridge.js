@@ -22,8 +22,27 @@ function validateGptCommand(input) {
   return true;
 }
 
+function stableJson(value) {
+  if (Array.isArray(value)) return value.map(stableJson);
+  if (value && typeof value === 'object') {
+    return Object.keys(value).sort().reduce((out, key) => {
+      out[key] = stableJson(value[key]);
+      return out;
+    }, {});
+  }
+  return value;
+}
+
 function commandDigest(input) {
-  return crypto.createHash('sha256').update(JSON.stringify({ id: input.id, type: input.type, payload: input.payload, expiresAt: input.expiresAt, targetDeviceId: input.targetDeviceId || null })).digest('hex');
+  const expiresAt = new Date(input.expiresAt);
+  const normalized = {
+    id: input.id,
+    type: input.type,
+    payload: stableJson(input.payload),
+    expiresAt: Number.isFinite(expiresAt.getTime()) ? expiresAt.toISOString() : input.expiresAt,
+    targetDeviceId: input.targetDeviceId || null
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
 }
 
 export { ALLOWED_TYPES, validateGptCommand, commandDigest };
