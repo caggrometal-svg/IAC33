@@ -16,7 +16,7 @@ class OtaVerifierTest {
         artifactSize = bytes.size.toLong(),
         algorithm = "SHA256withECDSA",
         signatureBase64 = "signature",
-        keyId = "iac33-ota-v1",
+        keyId = OTA_KEY_ID,
         rollbackRef = "release-0"
     )
 
