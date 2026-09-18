@@ -109,6 +109,17 @@ async function body(req, maxBytes = MAX_BODY_BYTES) {
   catch { const error = new Error('INVALID_JSON'); error.status = 400; throw error; }
 }
 
+function compareOtaVersionsServer(left, right) {
+  const a = String(left).split('.').map(Number);
+  const b = String(right).split('.').map(Number);
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    const av = a[i] ?? 0;
+    const bv = b[i] ?? 0;
+    if (av !== bv) return av > bv ? 1 : -1;
+  }
+  return 0;
+}
+
 function tokenMatches(value, expected) {
   if (!expected || typeof value !== 'string') return false;
   const a = Buffer.from(value); const b = Buffer.from(expected);
@@ -138,7 +149,9 @@ async function verifyDeviceRequest(req, rawBody) {
   if (!valid) return { ok: false, status: 401, error: 'DEVICE_AUTH_INVALID_SIGNATURE' };
   const nonceInsert = await pool.query(`INSERT INTO device_nonces(device_id,nonce,expires_at) VALUES($1,$2,to_timestamp($3/1000.0)+interval '2 minutes') ON CONFLICT DO NOTHING RETURNING nonce`, [deviceId, nonce, timestamp]);
   if (!nonceInsert.rowCount) return { ok: false, status: 409, error: 'DEVICE_AUTH_REPLAY' };
-  await pool.query('UPDATE devices SET last_seen_at=now() WHERE id=$1', [deviceId]);
+  const appVersion = String(req.headers['x-iac33-app-version'] || '').trim();
+  if (appVersion && /^\d+(\.\d+){2,3}$/.test(appVersion)) await pool.query('UPDATE devices SET last_seen_at=now(), app_version=$2 WHERE id=$1', [deviceId, appVersion]);
+  else await pool.query('UPDATE devices SET last_seen_at=now() WHERE id=$1', [deviceId]);
   await pool.query('DELETE FROM device_nonces WHERE expires_at <= now()');
   return { ok: true, deviceId };
 }
@@ -260,6 +273,14 @@ const server = http.createServer(async (req, res) => {
       try { const result = await generateWithFreePool({ messages: input.messages, timeoutMs }); return send(res, 200, { ok: true, provider: result.provider, model: result.model, text: String(result.text).slice(0, MAX_AI_RESPONSE_CHARS), diagnostics: result.diagnostics }); }
       catch (error) { return send(res, 503, { ok: false, error: error.message || 'AI_PROVIDERS_UNAVAILABLE', diagnostics: error.diagnostics || [] }); }
       finally { aiInflight = Math.max(0, aiInflight - 1); }
+    }
+    if (req.method === 'GET' && path === '/v1/gpt/ota/bootstrap-status') {
+      if (!(await authorizedGptBridge(req))) return send(res, 401, { ok: false, error: 'GPT_BRIDGE_UNAUTHORIZED' });
+      const requiredVersion = String(new URL(req.url, 'http://localhost').searchParams.get('requiredVersion') || '');
+      if (!/^\d+(\.\d+){2,3}$/.test(requiredVersion)) return send(res, 400, { ok: false, error: 'INVALID_REQUIRED_VERSION' });
+      const rows = pool ? await pool.query('SELECT app_version FROM devices WHERE app_version IS NOT NULL') : { rows: [] };
+      const ready = rows.rows.some((row) => compareOtaVersionsServer(row.app_version, requiredVersion) >= 0);
+      return send(res, 200, { ok: true, bootstrapVersion: requiredVersion, confirmed: ready });
     }
     if (req.method === 'POST' && path === '/v1/devices/enroll') {
       if (!pairingAllowed(req)) return send(res, 429, { ok: false, error: 'PAIRING_RATE_LIMITED' });
