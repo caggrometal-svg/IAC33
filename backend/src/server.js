@@ -293,7 +293,7 @@ const server = http.createServer(async (req, res) => {
         if (!res.writableEnded) controller.abort();
       };
       req.on('aborted', abortRequest);
-      req.on('close', abortRequest);
+      res.on('close', abortRequest);
       try {
         const input = await body(req);
         if (!Array.isArray(input.messages) || !input.messages.length || input.messages.length > MAX_AI_MESSAGES || input.messages.some((m) => !m || !['system', 'user', 'assistant'].includes(m.role) || typeof m.content !== 'string' || !m.content.trim() || m.content.length > MAX_AI_MESSAGE_CHARS)) {
@@ -329,7 +329,7 @@ const server = http.createServer(async (req, res) => {
         }
       } finally {
         req.off('aborted', abortRequest);
-        req.off('close', abortRequest);
+        res.off('close', abortRequest);
         aiInflight = Math.max(0, aiInflight - 1);
       }
     }
