@@ -4,6 +4,7 @@ import { Pool } from 'pg';
 import { allowedTransitions, validCommand } from './command-core.js';
 import { generateWithFreePool } from './ai-router.js';
 import { validateGptCommand, commandDigest } from './gpt-command-bridge.js';
+import { fetchLatestSeismic } from './seismic.js';
 
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_AI_MESSAGES = 64;
@@ -168,6 +169,14 @@ const server = http.createServer(async (req, res) => {
   try {
     const path = new URL(req.url, 'http://localhost').pathname;
     if (req.method === 'GET' && path === '/health') return send(res, 200, { ok: true, service: 'iac33-backend', status: 'alive' });
+    if (req.method === 'GET' && path === '/v1/seismic/latest') {
+      try {
+        const result = await fetchLatestSeismic();
+        return send(res, 200, { ok: true, ...result });
+      } catch (error) {
+        return send(res, 503, { ok: false, error: error.message || 'SEISMIC_SOURCE_UNAVAILABLE' });
+      }
+    }
     if (req.method === 'GET' && path === '/ready') {
       if (!pool) return send(res, 503, { ok: false, service: 'iac33-backend', status: 'not_ready', database: false });
       if (await readinessProbe()) return send(res, 200, { ok: true, service: 'iac33-backend', status: 'ready', database: true, deviceAuth: Boolean(devicePairingToken) });
