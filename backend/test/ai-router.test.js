@@ -26,7 +26,7 @@ test('sends exact prompt stop sequences to OpenAI-compatible providers', async (
   };
 
   await router.generateWithFreePool({ messages, timeoutMs: 1000 });
-  assert.deepEqual(requestBody.stop, ['\\nUSER:', '\\nASSISTANT:']);
+  assert.deepEqual(requestBody.stop, ['\nUSER:', '\nASSISTANT:']);
 });
 
 test('returns the first responding free provider', async () => {
@@ -220,6 +220,32 @@ test('rejects unsafe configurable endpoints and uses the trusted Kilo endpoint',
 });
 
 
+test('uses private Ollama before public fallback providers', async () => {
+  process.env.AI_PROVIDER_ORDER = 'ollama,kilo';
+  process.env.IAC33_OLLAMA_ENDPOINT = 'https://llm.example.test';
+  process.env.IAC33_OLLAMA_API_KEY = 'test-ollama-key';
+  process.env.IAC33_OLLAMA_MODEL = 'gpt-oss:20b';
+  let requestedUrl = '';
+  let requestHeaders = {};
+  globalThis.fetch = async (url, options) => {
+    requestedUrl = String(url);
+    requestHeaders = options.headers;
+    const body = JSON.parse(options.body);
+    assert.equal(body.model, 'gpt-oss:20b');
+    assert.equal(body.stream, false);
+    return new Response(
+      JSON.stringify({ choices: [{ message: { content: 'private-ok' } }], model: 'gpt-oss:20b' }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+  };
+  const result = await router.generateWithFreePool({ messages, timeoutMs: 3000 });
+  assert.equal(result.provider, 'ollama');
+  assert.equal(result.text, 'private-ok');
+  assert.equal(requestedUrl, 'https://llm.example.test/v1/chat/completions');
+  assert.equal(requestHeaders['x-iac33-llm-key'], 'test-ollama-key');
+});
+
+
 test('routes through the recovered Andrew2 Render backend', async () => {
   process.env.AI_PROVIDER_ORDER = 'andrew2';
   let requestedUrl = '';
@@ -237,17 +263,22 @@ test('routes through the recovered Andrew2 Render backend', async () => {
   assert.equal(requestedUrl, 'https://andrew2-api.onrender.com/v1/ai/generate');
 });
 
-test('keeps legacy Anthropic source available as an optional fallback', async () => {
-  process.env.AI_PROVIDER_ORDER = 'anthropic';
+test('keeps the legacy provider pool available without making it mandatory', async () => {
+  process.env.AI_PROVIDER_ORDER = 'anthropic,deepseek,xai';
   process.env.ANTHROPIC_API_KEY = 'test-anthropic';
+  process.env.DEEPSEEK_API_KEY = 'test-deepseek';
+  process.env.XAI_API_KEY = 'test-xai';
+  let calls = 0;
   globalThis.fetch = async (url) => {
-    assert.equal(new URL(String(url)).hostname, 'api.anthropic.com');
-    return new Response(
-      JSON.stringify({ content: [{ text: 'anthropic-ok' }], model: 'claude-test' }),
-      { status: 200, headers: { 'content-type': 'application/json' } }
-    );
+    calls += 1;
+    const host = new URL(String(url)).hostname;
+    if (host === 'api.anthropic.com') {
+      return new Response(JSON.stringify({ content: [{ text: 'anthropic-ok' }], model: 'test' }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'unexpected' } }] }), { status: 200 });
   };
-  const result = await router.generateWithFreePool({ messages, timeoutMs: 2000 });
+  const result = await router.generateWithFreePool({ messages, timeoutMs: 3000 });
   assert.equal(result.provider, 'anthropic');
   assert.equal(result.text, 'anthropic-ok');
+  assert.equal(calls, 1);
 });
