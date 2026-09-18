@@ -177,3 +177,5 @@ private fun createMapView(context: Context): MapView {
         isVerticalMapRepetitionEnabled = false
     }
 }
+
+// Unified APK build trigger: includes current NIA 73 backend integration, map navigation and C33 icon.
