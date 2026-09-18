@@ -26,7 +26,7 @@ test('sends exact prompt stop sequences to OpenAI-compatible providers', async (
   };
 
   await router.generateWithFreePool({ messages, timeoutMs: 1000 });
-  assert.deepEqual(requestBody.stop, ['\\nUSER:', '\\nASSISTANT:']);
+  assert.deepEqual(requestBody.stop, ['\nUSER:', '\nASSISTANT:']);
 });
 
 test('returns the first responding free provider', async () => {
