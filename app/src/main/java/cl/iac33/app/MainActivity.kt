@@ -71,6 +71,7 @@ import cl.iac33.app.seismic.SeismicClient
 import cl.iac33.app.seismic.SeismicEvent
 import cl.iac33.app.seismic.SeismicEstimate
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -82,7 +83,7 @@ import java.net.URL
 import java.util.Locale
 import java.util.UUID
 
-data class ChatLine(val role: String, val text: String)
+data class ChatLine(val role: String, val text: String, val source: String = "unknown")
 
 private val sections = listOf("IA", "Sismos", "C33", "Multimedia", "Más")
 private val sectionGlyphs = listOf("AI", "EQ", "C33", "MED", "•••")
@@ -180,7 +181,6 @@ class MainActivity : ComponentActivity() {
                             .fillMaxSize()
                             .padding(padding)
                             .padding(horizontal = 12.dp)
-                            .imePadding()
                     ) {
                         when (selected) {
                             0 -> AiPanel(
@@ -228,26 +228,7 @@ class MainActivity : ComponentActivity() {
 private const val AI_REQUEST_TIMEOUT_MS = 10_000L
 private const val AI_UI_TIMEOUT_MS = 12_000L
 
-private fun cleanVisibleAiText(raw: String?): String {
-    return raw.orEmpty()
-        .trim()
-        .lines()
-        .filterNot { line ->
-            val normalized = line.trim().lowercase()
-            normalized.startsWith("system:") ||
-                normalized.startsWith("user:") ||
-                normalized.startsWith("assistant:") ||
-                normalized.startsWith("provider ·") ||
-                normalized.startsWith("provider:") ||
-                normalized.startsWith("http 503") ||
-                normalized.startsWith("http 429") ||
-                normalized.startsWith("ai_providers_unavailable") ||
-                normalized.startsWith("modo local activo") ||
-                normalized.startsWith("respaldo local activado")
-        }
-        .joinToString("\n")
-        .trim()
-}
+private fun cleanVisibleAiText(raw: String?): String = AiTextSanitizer.sanitize(raw)
 
 @Composable
 private fun AiPanel(
@@ -259,29 +240,33 @@ private fun AiPanel(
     val scope = rememberCoroutineScope()
     var draft by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
+    var activeJob by remember { mutableStateOf<Job?>(null) }
     val listState = rememberLazyListState()
     val quickPrompts = listOf("Estado del sistema", "Analiza Sismos", "¿Cómo funciona GPS?", "Abrir Multimedia")
 
-    LaunchedEffect(lines.size) {
+    LaunchedEffect(lines.size, busy) {
         if (lines.isNotEmpty()) listState.animateScrollToItem(lines.lastIndex)
     }
 
     fun sendMessage(raw: String) {
         val prompt = raw.trim()
         if (prompt.isEmpty() || busy) return
-        val updated = lines + ChatLine("user", prompt)
+
+        val updated = lines + ChatLine("user", prompt, "user")
         onLinesChange(updated)
         draft = ""
         busy = true
 
-        scope.launch {
+        activeJob = scope.launch {
             try {
                 val messages = listOf(
                     AiMessage(
                         "system",
                         "Responde únicamente a lo que pregunto. Responde en español salvo que pida otro idioma. Sé directo, claro y natural. No repitas ni parafrasees mi pregunta. No agregues saludos, despedidas, relleno ni encabezados innecesarios. No muestres SYSTEM, USER, ASSISTANT, proveedores, códigos HTTP, diagnósticos, historial crudo ni mensajes internos. Nunca presentes una estimación sísmica como predicción exacta."
                     )
-                ) + updated.takeLast(16).map { AiMessage(it.role, it.text.take(ChatStore.MAX_MESSAGE_CHARS)) }
+                ) + updated.takeLast(16).map {
+                    AiMessage(it.role, it.text.take(ChatStore.MAX_MESSAGE_CHARS))
+                }
 
                 val result = withTimeout(AI_UI_TIMEOUT_MS) {
                     engine.generate(
@@ -296,28 +281,54 @@ private fun AiPanel(
                 when (result) {
                     is OperationResult.Success -> {
                         val value = result.value
-                        val answer = cleanVisibleAiText(value.text)
+                        val answer = AiTextSanitizer.sanitize(value.text)
                         if (answer.isNotBlank()) {
-                            onLinesChange(updated + ChatLine("assistant", answer))
+                            val source = if (value.provider.equals("local-fallback", ignoreCase = true)) "local" else "remote"
+                            onLinesChange(updated + ChatLine("assistant", answer, source))
                         }
                     }
                     is OperationResult.Failure -> {
-                        onLinesChange(updated + ChatLine("assistant", "No se pudo obtener una respuesta."))
+                        onLinesChange(
+                            updated + ChatLine(
+                                "assistant",
+                                "El núcleo IA no obtuvo una respuesta utilizable; el respaldo local permanece disponible.",
+                                "local"
+                            )
+                        )
                     }
                 }
-            } catch (error: TimeoutCancellationException) {
-                onLinesChange(updated + ChatLine("assistant", "No se pudo obtener una respuesta."))
+            } catch (_: TimeoutCancellationException) {
+                if (isActive) {
+                    onLinesChange(
+                        updated + ChatLine(
+                            "assistant",
+                            "El núcleo IA agotó el tiempo de respuesta; IAC33 conserva el respaldo local y reintentará con la ruta disponible.",
+                            "local"
+                        )
+                    )
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (error: Exception) {
-                onLinesChange(updated + ChatLine("assistant", "No se pudo obtener una respuesta."))
+            } catch (_: Exception) {
+                onLinesChange(
+                    updated + ChatLine(
+                        "assistant",
+                        "Se produjo un fallo transitorio de conectividad; IAC33 conserva el respaldo local.",
+                        "local"
+                    )
+                )
             } finally {
                 busy = false
             }
         }
     }
 
-    Column(Modifier.fillMaxSize().navigationBarsPadding()) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .navigationBarsPadding()
+            .imePadding()
+    ) {
         Row(
             Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -326,31 +337,48 @@ private fun AiPanel(
             Column(Modifier.weight(1f)) {
                 Text("Centro IA", style = MaterialTheme.typography.headlineSmall)
                 Text(
-                    if (settings.aiLocalFirst) "Local primero · respaldo remoto" else "Remoto primero · respaldo local",
+                    if (settings.aiLocalFirst) "Intención local primero · respaldo remoto" else "Remoto primero · respaldo local",
                     style = MaterialTheme.typography.bodySmall
                 )
             }
-            AssistChip(
-                onClick = {},
-                enabled = false,
-                label = { Text(if (busy) "Procesando" else "Listo") }
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                AssistChip(
+                    onClick = {},
+                    enabled = false,
+                    label = { Text(if (busy) "Procesando" else "Listo") }
+                )
+                if (busy) {
+                    OutlinedButton(
+                        onClick = {
+                            activeJob?.cancel()
+                            activeJob = null
+                            busy = false
+                        }
+                    ) { Text("Cancelar") }
+                }
+            }
         }
+
         Spacer(Modifier.height(6.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             items(quickPrompts) { prompt ->
                 AssistChip(onClick = { sendMessage(prompt) }, label = { Text(prompt) })
             }
         }
+
         Spacer(Modifier.height(6.dp))
         Card(
-            modifier = Modifier.fillMaxWidth().weight(1f),
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
             colors = CardDefaults.cardColors(containerColor = Color(0xFF030507)),
             shape = RoundedCornerShape(22.dp),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
         ) {
             LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 12.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 10.dp, vertical = 12.dp),
                 state = listState,
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
@@ -377,11 +405,8 @@ private fun AiPanel(
                             ),
                             border = BorderStroke(
                                 1.dp,
-                                if (isUser) {
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
-                                } else {
-                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
-                                }
+                                if (isUser) MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+                                else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
                             )
                         ) {
                             Column(Modifier.padding(horizontal = 14.dp, vertical = 11.dp)) {
@@ -391,37 +416,46 @@ private fun AiPanel(
                                 ) {
                                     Text(
                                         "●",
-                                        color = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
+                                        color = if (isUser) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.secondary,
                                         style = MaterialTheme.typography.labelSmall
                                     )
                                     Text(
                                         if (isUser) "TÚ" else "IAC33",
-                                        color = if (isUser) {
-                                            MaterialTheme.colorScheme.onPrimaryContainer
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurfaceVariant
-                                        },
+                                        color = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer
+                                        else MaterialTheme.colorScheme.onSurfaceVariant,
                                         style = MaterialTheme.typography.labelSmall
                                     )
+                                    if (!isUser) {
+                                        AssistChip(
+                                            onClick = {},
+                                            enabled = false,
+                                            label = {
+                                                Text(
+                                                    if (line.source == "local") "Respaldo local" else "Nodo remoto"
+                                                )
+                                            }
+                                        )
+                                    }
                                 }
                                 Spacer(Modifier.height(4.dp))
                                 Text(
-                                    text = line.text,
-                                    color = if (isUser) {
-                                        MaterialTheme.colorScheme.onPrimaryContainer
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                    },
+                                    text = AiTextSanitizer.sanitize(line.text),
+                                    color = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
                                     style = MaterialTheme.typography.bodyLarge
                                 )
                             }
                         }
                     }
                 }
+
                 if (busy) {
                     item {
                         Row(
-                            Modifier.fillMaxWidth().padding(vertical = 6.dp, horizontal = 4.dp),
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp, horizontal = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
@@ -435,8 +469,13 @@ private fun AiPanel(
                 }
             }
         }
+
         Spacer(Modifier.height(6.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.Bottom
+        ) {
             OutlinedTextField(
                 value = draft,
                 onValueChange = { draft = it.take(ChatStore.MAX_MESSAGE_CHARS) },
@@ -454,7 +493,6 @@ private fun AiPanel(
     }
 }
 
-@Composable
 private fun MorePanel(onOpen: (Int) -> Unit) {
     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
