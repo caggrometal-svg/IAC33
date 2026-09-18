@@ -10,6 +10,7 @@ import { fetchLatestSeismic } from './seismic.js';
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_AI_MESSAGES = 64;
 const MAX_AI_MESSAGE_CHARS = 32_000;
+const MAX_AI_RESPONSE_CHARS = 32_000;
 const AI_MIN_TIMEOUT_MS = 1_000;
 const AI_MAX_TIMEOUT_MS = 45_000;
 const READY_TIMEOUT_MS = 2_000;
@@ -26,6 +27,7 @@ const databaseUrl = process.env.DATABASE_URL || '';
 const databaseNeedsSsl = databaseUrl && !/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(databaseUrl);
 const pool = databaseUrl ? new Pool({ connectionString: databaseUrl, ...(databaseNeedsSsl ? { ssl: { rejectUnauthorized: false } } : {}), connectionTimeoutMillis: READY_TIMEOUT_MS, idleTimeoutMillis: 10000, max: 5 }) : null;
 const aiWindow = new Map();
+pool?.on('error', (error) => console.error('IAC33 database pool error', error?.message || error));
 
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('INVALID_PORT');
 
@@ -250,7 +252,7 @@ const server = http.createServer(async (req, res) => {
       if (!Array.isArray(input.messages) || !input.messages.length || input.messages.length > MAX_AI_MESSAGES || input.messages.some((m) => !m || !['system', 'user', 'assistant'].includes(m.role) || typeof m.content !== 'string' || !m.content.trim() || m.content.length > MAX_AI_MESSAGE_CHARS)) return send(res, 400, { ok: false, error: 'INVALID_AI_REQUEST' });
       const requestedTimeout = Number(input.timeoutMs || 30000);
       const timeoutMs = Number.isFinite(requestedTimeout) ? Math.min(Math.max(requestedTimeout, AI_MIN_TIMEOUT_MS), AI_MAX_TIMEOUT_MS) : 30000;
-      try { const result = await generateWithFreePool({ messages: input.messages, timeoutMs }); return send(res, 200, { ok: true, provider: result.provider, model: result.model, text: result.text, diagnostics: result.diagnostics }); }
+      try { const result = await generateWithFreePool({ messages: input.messages, timeoutMs }); return send(res, 200, { ok: true, provider: result.provider, model: result.model, text: String(result.text).slice(0, MAX_AI_RESPONSE_CHARS), diagnostics: result.diagnostics }); }
       catch (error) { return send(res, 503, { ok: false, error: error.message || 'AI_PROVIDERS_UNAVAILABLE', diagnostics: error.diagnostics || [] }); }
     }
     if (req.method === 'POST' && path === '/v1/devices/enroll') {
@@ -344,6 +346,11 @@ const server = http.createServer(async (req, res) => {
     return send(res, status, { ok: false, error: code });
   }
 });
+
+server.requestTimeout = 60_000;
+server.headersTimeout = 15_000;
+server.keepAliveTimeout = 5_000;
+server.timeout = 120_000;
 
 server.on('clientError', (_error, socket) => socket.destroy());
 
