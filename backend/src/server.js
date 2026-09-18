@@ -67,8 +67,18 @@ function send(res, status, body) {
 }
 
 function clientKey(req) {
-  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',').map((value) => value.trim()).filter(Boolean);
-  return (forwarded.at(-1) || req.socket.remoteAddress || 'unknown').slice(0, 128);
+  // Render traffic is fronted by Cloudflare; CF-Connecting-IP is the preferred
+  // client identifier because it is rewritten by the edge and is not caller-controlled.
+  const cloudflareIp = String(req.headers['cf-connecting-ip'] || '').trim();
+  if (cloudflareIp) return cloudflareIp.slice(0, 128);
+
+  // Fallback for non-Cloudflare/local test traffic. Render documents X-Forwarded-For
+  // as the client-IP source for requests reaching the application.
+  const forwarded = String(req.headers['x-forwarded-for'] || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return (forwarded[0] || req.socket.remoteAddress || 'unknown').slice(0, 128);
 }
 
 function pairingAllowed(req) {
