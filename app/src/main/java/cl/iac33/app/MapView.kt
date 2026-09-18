@@ -2,8 +2,10 @@ package cl.iac33.app
 
 import android.annotation.SuppressLint
 import android.graphics.Color as AndroidColor
+import android.util.Log
 import android.webkit.WebSettings
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
@@ -36,6 +38,17 @@ fun IAC33Map(
         factory = { context ->
             WebView(context).apply {
                 setBackgroundColor(AndroidColor.rgb(3, 7, 18))
+                webViewClient = object : WebViewClient() {
+                    override fun onReceivedError(
+                        view: WebView,
+                        errorCode: Int,
+                        description: String,
+                        failingUrl: String
+                    ) {
+                        Log.e("IAC33-MAP", "WebView error code=" + errorCode + " description=" + description + " url=" + failingUrl)
+                    }
+                }
+                tag = html
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.cacheMode = WebSettings.LOAD_DEFAULT
@@ -46,7 +59,10 @@ fun IAC33Map(
             }
         },
         update = { webView ->
-            webView.loadDataWithBaseURL("https://www.openstreetmap.org/", html, "text/html", "UTF-8", null)
+            if (webView.tag != html) {
+                webView.tag = html
+                webView.loadDataWithBaseURL("https://www.openstreetmap.org/", html, "text/html", "UTF-8", null)
+            }
         }
     )
 }
