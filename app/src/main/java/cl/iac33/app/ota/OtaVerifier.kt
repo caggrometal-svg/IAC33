@@ -16,10 +16,20 @@ object OtaVerifier {
 
     fun verifySize(bytes: ByteArray, expectedSize: Long): Boolean = bytes.size.toLong() == expectedSize
 
-    fun verifySignature(bytes: ByteArray, signatureBase64: String, publicKeyBase64: String): Boolean = runCatching {
+    fun verifySignature(
+        bytes: ByteArray,
+        signatureBase64: String,
+        publicKeyBase64: String,
+        algorithm: String = "SHA256withECDSA"
+    ): Boolean = runCatching {
         val keyBytes = Base64.getDecoder().decode(publicKeyBase64)
-        val publicKey: PublicKey = KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(keyBytes))
-        val verifier = Signature.getInstance("SHA256withECDSA")
+        val keyAlgorithm = when (algorithm) {
+            "SHA256withECDSA" -> "EC"
+            "SHA256withRSA" -> "RSA"
+            else -> return false
+        }
+        val publicKey: PublicKey = KeyFactory.getInstance(keyAlgorithm).generatePublic(X509EncodedKeySpec(keyBytes))
+        val verifier = Signature.getInstance(algorithm)
         verifier.initVerify(publicKey)
         verifier.update(bytes)
         verifier.verify(Base64.getDecoder().decode(signatureBase64))
@@ -29,5 +39,5 @@ object OtaVerifier {
         manifest.isContractValid() &&
             verifySize(bytes, manifest.artifactSize) &&
             verifyDigest(bytes, manifest.artifactSha256) &&
-            verifySignature(bytes, manifest.signatureBase64, publicKeyBase64)
+            verifySignature(bytes, manifest.signatureBase64, publicKeyBase64, manifest.algorithm)
 }
