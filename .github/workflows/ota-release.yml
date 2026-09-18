@@ -36,7 +36,6 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.IAC33_ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.IAC33_ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.IAC33_ANDROID_KEY_PASSWORD }}
-          BRIDGE_KEY_B64: ${{ secrets.BRIDGE_ECDSA_PRIVATE_KEY_B64 }}
         run: |
           set -eu
           test -n "$KEYSTORE_B64"
@@ -44,51 +43,17 @@ jobs:
           test -n "$KEY_ALIAS"
           test -n "$KEY_PASSWORD"
           printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE_PATH"
-          keytool -list -keystore "$KEYSTORE_PATH" -storepass "$KEYSTORE_PASSWORD" >/dev/null
-          test -n "$BRIDGE_KEY_B64"
-          printf '%s' "$BRIDGE_KEY_B64" | base64 --decode > "$RUNNER_TEMP/bridge-key-build.raw"
-          echo "Bridge key container: $(file -b "$RUNNER_TEMP/bridge-key-build.raw")"
-          if grep -q '^-----BEGIN ' "$RUNNER_TEMP/bridge-key-build.raw"; then
-            head -n 1 "$RUNNER_TEMP/bridge-key-build.raw" | tr -d '\r'
-          fi
-          if grep -q -- '-----BEGIN OPENSSH PRIVATE KEY-----' "$RUNNER_TEMP/bridge-key-build.raw"; then
-            ssh-keygen -p -m PEM -P "" -N "" -f "$RUNNER_TEMP/bridge-key-build.raw" >/dev/null 2>&1
-          fi
-          if openssl pkey -in "$RUNNER_TEMP/bridge-key-build.raw" -out "$RUNNER_TEMP/bridge-key-build.pem" 2>/dev/null; then
-            :
-          elif openssl pkey -inform DER -in "$RUNNER_TEMP/bridge-key-build.raw" -out "$RUNNER_TEMP/bridge-key-build.pem" 2>/dev/null; then
-            :
-          elif openssl ec -inform DER -in "$RUNNER_TEMP/bridge-key-build.raw" -out "$RUNNER_TEMP/bridge-key-build.pem" 2>/dev/null; then
-            :
-          elif openssl pkcs8 -inform DER -in "$RUNNER_TEMP/bridge-key-build.raw" -nocrypt -out "$RUNNER_TEMP/bridge-key-build.pem" 2>/dev/null; then
-            :
-          elif [ "$(file -b "$RUNNER_TEMP/bridge-key-build.raw")" = "Java KeyStore" ]; then
-            BRIDGE_ALIAS=""
-            BRIDGE_SRC_PASS=""
-            while IFS= read -r candidate; do
-              [ -n "$candidate" ] || continue
-              aliases="$(keytool -list -keystore "$RUNNER_TEMP/bridge-key-build.raw" -storetype JKS -storepass "$candidate" 2>/dev/null | awk -F, '/PrivateKeyEntry/ {gsub(/^ +| +$/, "", $1); print $1}')"
-              if [ -n "$aliases" ]; then
-                BRIDGE_ALIAS="$(printf '%s
-' "$aliases" | head -n1)"
-                BRIDGE_SRC_PASS="$candidate"
-                break
-              fi
-            done <<EOF
-$KEYSTORE_PASSWORD
-$KEY_PASSWORD
-changeit
-EOF
-            test -n "$BRIDGE_ALIAS"
-            keytool -importkeystore -noprompt               -srckeystore "$RUNNER_TEMP/bridge-key-build.raw" -srcstoretype JKS               -srcstorepass "$BRIDGE_SRC_PASS" -srcalias "$BRIDGE_ALIAS" -srckeypass "$KEY_PASSWORD"               -destkeystore "$RUNNER_TEMP/bridge-key-build.p12" -deststoretype PKCS12               -deststorepass "$KEY_PASSWORD" -destkeypass "$KEY_PASSWORD" >/dev/null 2>&1
-          elif openssl pkcs12 -in "$RUNNER_TEMP/bridge-key-build.raw" -nocerts -nodes -passin pass: -out "$RUNNER_TEMP/bridge-key-build.pem" 2>/dev/null; then
-            :
-          else
-            echo "Unable to normalize Bridge ECDSA public-key source" >&2
-            exit 1
-          fi
+          keytool -list -keystore "$KEYSTORE_PATH" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
+          keytool -importkeystore -noprompt             -srckeystore "$KEYSTORE_PATH" -srcstoretype JKS             -srcstorepass "$KEYSTORE_PASSWORD" -srcalias "$KEY_ALIAS" -srckeypass "$KEY_PASSWORD"             -destkeystore "$RUNNER_TEMP/iac33-ota-signer.p12" -deststoretype PKCS12             -deststorepass "$KEY_PASSWORD" -destkeypass "$KEY_PASSWORD" >/dev/null 2>&1
+          openssl pkcs12 -in "$RUNNER_TEMP/iac33-ota-signer.p12" -nocerts -nodes             -passin pass:"$KEY_PASSWORD" -out "$RUNNER_TEMP/bridge-key-build.pem" >/dev/null 2>&1
+          openssl pkey -in "$RUNNER_TEMP/bridge-key-build.pem" -text -noout >/dev/null
           IAC33_OTA_PUBLIC_KEY_B64="$(openssl pkey -in "$RUNNER_TEMP/bridge-key-build.pem" -pubout -outform DER | base64 -w0)"
           test -n "$IAC33_OTA_PUBLIC_KEY_B64"
+          if openssl pkey -in "$RUNNER_TEMP/bridge-key-build.pem" -text -noout 2>/dev/null | grep -q 'ASN1 OID: prime256v1'; then
+            echo "SHA256withECDSA" > "$RUNNER_TEMP/ota-algorithm"
+          else
+            echo "SHA256withRSA" > "$RUNNER_TEMP/ota-algorithm"
+          fi
           gradle assembleRelease --no-daemon --stacktrace --console=plain             -PIAC33_OTA_PUBLIC_KEY_B64="$IAC33_OTA_PUBLIC_KEY_B64"             -Pandroid.injected.signing.store.file="$KEYSTORE_PATH"             -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD"             -Pandroid.injected.signing.key.alias="$KEY_ALIAS"             -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
           test -s app/build/outputs/apk/release/app-release.apk
 
