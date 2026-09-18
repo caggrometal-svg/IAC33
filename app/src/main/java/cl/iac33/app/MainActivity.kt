@@ -60,6 +60,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import cl.iac33.app.ai.AiEngineImpl
+import cl.iac33.app.ai.AiTextSanitizer
 import cl.iac33.app.core.AiMessage
 import cl.iac33.app.core.AiRequest
 import cl.iac33.app.core.OperationResult
@@ -493,6 +494,7 @@ private fun AiPanel(
     }
 }
 
+@Composable
 private fun MorePanel(onOpen: (Int) -> Unit) {
     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
