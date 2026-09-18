@@ -1,6 +1,10 @@
 import { STOP_SEQUENCES, sanitizeAssistantText } from './ai-output.js';
 
 const providers = {
+  andrew2: { key: null, async call(messages, timeoutMs, _attempt, signal) { return callAndrew2(messages, timeoutMs, signal); } },
+  anthropic: { key: 'ANTHROPIC_API_KEY', async call(messages, timeoutMs, _attempt, signal) { return callAnthropic(messages, timeoutMs, signal); } },
+  deepseek: { key: 'DEEPSEEK_API_KEY', async call(messages, timeoutMs, _attempt, signal) { return callOpenAiCompatible('https://api.deepseek.com/chat/completions', process.env.DEEPSEEK_API_KEY, process.env.DEEPSEEK_MODEL || 'deepseek-chat', messages, timeoutMs, signal); } },
+  xai: { key: 'XAI_API_KEY', async call(messages, timeoutMs, _attempt, signal) { return callOpenAiCompatible('https://api.x.ai/v1/chat/completions', process.env.XAI_API_KEY, process.env.XAI_MODEL || 'grok-3-mini', messages, timeoutMs, signal); } },
   horde: { key: null, async call(messages, timeoutMs, attempt, signal) { return callAiHorde(messages, timeoutMs, attempt, signal); } },
   pollinations: { key: null, async call(messages, timeoutMs, attempt, signal) { return callPollinations(messages, timeoutMs, attempt, signal); } },
   kilo: { key: null, async call(messages, timeoutMs, attempt, signal) { return callKilo(messages, timeoutMs, attempt, signal); } },
@@ -20,7 +24,7 @@ function providerError(status, message, retryAfterMs = 0) {
 }
 
 const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
-const FREE_PROVIDER_DEFAULTS = ['kilo', 'horde', 'pollinations'];
+const FREE_PROVIDER_DEFAULTS = ['andrew2', 'kilo', 'horde', 'pollinations'];
 const PROVIDER_CIRCUIT_FAILURES = Math.min(Math.max(Number(process.env.AI_CIRCUIT_FAILURES || 2), 1), 5);
 const PROVIDER_CIRCUIT_OPEN_MS = Math.min(Math.max(Number(process.env.AI_CIRCUIT_OPEN_MS || 30000), 5000), 300000);
 const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024;
@@ -62,6 +66,8 @@ function sleep(ms, signal) {
 }
 
 function providerTimeoutMs(id) {
+  if (id === 'andrew2') return Math.min(Math.max(Number(process.env.AI_ANDREW2_TIMEOUT_MS || 3500), 1000), 7000);
+  if (id === 'anthropic' || id === 'deepseek' || id === 'xai') return Math.min(Math.max(Number(process.env.AI_PROVIDER_TIMEOUT_MS || 3000), 1200), 7000);
   if (id === 'kilo') return Math.min(Math.max(Number(process.env.AI_KILO_TIMEOUT_MS || 2500), 1000), 6000);
   if (id === 'horde') return Math.min(Math.max(Number(process.env.AI_HORDE_TIMEOUT_MS || 4500), 2000), 8000);
   if (id === 'pollinations') return Math.min(Math.max(Number(process.env.AI_POLLINATIONS_TIMEOUT_MS || 2500), 1000), 6000);
@@ -141,6 +147,61 @@ function responseError(response, json, fallback) {
     json?.error?.message || json?.message || json?.errors?.[0]?.message || fallback,
     readRetryAfter(response)
   );
+}
+
+async function callAndrew2(messages, timeoutMs, parentSignal) {
+  const { signal, cleanup } = timeoutSignal(parentSignal, timeoutMs);
+  try {
+    const base = String(process.env.IAC33_ANDREW2_API_URL || 'https://andrew2-api.onrender.com').replace(/\/$/, '');
+    const parsed = new URL(base);
+    if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== 'andrew2-api.onrender.com') {
+      throw providerError(503, 'Andrew2 endpoint not trusted');
+    }
+    const headers = { 'content-type': 'application/json', 'x-iac33-bridge': 'IAC33/Andrew2' };
+    if (process.env.IAC33_ANDREW2_API_KEY) headers.authorization = 'Bearer ' + process.env.IAC33_ANDREW2_API_KEY;
+    const response = await fetch(parsed.toString() + '/v1/ai/generate', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ messages }),
+      signal
+    });
+    const json = await readJsonBounded(response);
+    if (!response.ok) throw responseError(response, json, 'Andrew2 request failed');
+    const text = sanitizeAssistantText(json?.text || json?.choices?.[0]?.message?.content || json?.response || '');
+    if (!text) throw providerError(502, 'Andrew2 returned empty response');
+    return { text, model: json?.model || 'andrew2' };
+  } finally {
+    cleanup();
+  }
+}
+
+async function callAnthropic(messages, timeoutMs, parentSignal) {
+  const { signal, cleanup } = timeoutSignal(parentSignal, timeoutMs);
+  try {
+    const system = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n');
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: process.env.ANTHROPIC_MODEL || 'claude-3-5-haiku-latest',
+        max_tokens: Math.min(Number(process.env.ANTHROPIC_MAX_TOKENS || 512), 1024),
+        ...(system ? { system } : {}),
+        messages: messages.filter((m) => m.role !== 'system')
+      }),
+      signal
+    });
+    const json = await readJsonBounded(response);
+    if (!response.ok) throw responseError(response, json, 'Anthropic request failed');
+    const text = sanitizeAssistantText(json?.content?.map((part) => part.text || '').join('') || '');
+    if (!text) throw providerError(502, 'Anthropic returned empty response');
+    return { text, model: json?.model || process.env.ANTHROPIC_MODEL || 'anthropic' };
+  } finally {
+    cleanup();
+  }
 }
 
 async function callGemini(messages, timeoutMs, model, parentSignal) {
