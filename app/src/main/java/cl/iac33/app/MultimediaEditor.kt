@@ -68,6 +68,7 @@ import androidx.media3.effect.HslAdjustment
 import androidx.media3.effect.Crop
 import androidx.media3.effect.RgbFilter
 import androidx.media3.effect.RgbMatrix
+import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.TextOverlay
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -606,7 +607,7 @@ private fun buildPreviewEffects(
                 android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
             )
         }
-        effects.add(TextOverlay.createStaticTextOverlay(overlay))
+        effects.add(OverlayEffect(listOf(TextOverlay.createStaticTextOverlay(overlay))))
     }
     return effects
 }
