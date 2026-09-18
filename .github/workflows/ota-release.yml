@@ -71,7 +71,11 @@ jobs:
           pathlib.Path(str(dst) + ".raw").write_bytes(key)
           print(len(key))
           PY
-          if grep -q -- '-----BEGIN .*PRIVATE KEY-----' "$RUNNER_TEMP/bridge-key.pem.raw"; then
+          if grep -q -- '-----BEGIN OPENSSH PRIVATE KEY-----' "$RUNNER_TEMP/bridge-key.pem.raw"; then
+            cp "$RUNNER_TEMP/bridge-key.pem.raw" "$RUNNER_TEMP/bridge-key.ssh"
+            ssh-keygen -p -m PEM -P "" -N "" -f "$RUNNER_TEMP/bridge-key.ssh" >/dev/null 2>&1
+            cp "$RUNNER_TEMP/bridge-key.ssh" "$RUNNER_TEMP/bridge-key.pem"
+          elif grep -q -- '-----BEGIN .*PRIVATE KEY-----' "$RUNNER_TEMP/bridge-key.pem.raw"; then
             cp "$RUNNER_TEMP/bridge-key.pem.raw" "$RUNNER_TEMP/bridge-key.pem"
           elif [ "$(wc -c < "$RUNNER_TEMP/bridge-key.pem.raw")" -eq 32 ]; then
             python3 - "$RUNNER_TEMP/bridge-key.pem.raw" "$RUNNER_TEMP/bridge-key.der" <<'PY'
