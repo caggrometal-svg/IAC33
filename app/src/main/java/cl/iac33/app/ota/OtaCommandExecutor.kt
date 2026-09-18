@@ -36,72 +36,85 @@ class OtaCommandExecutor(private val context: Context) {
         require(BuildConfig.IAC33_OTA_PUBLIC_KEY_B64.isNotBlank()) { "OTA trust key not configured" }
 
         val artifact = download(manifest.artifactRef, manifest.artifactSize)
-        val pipeline = OtaPipeline(BuildConfig.IAC33_OTA_PUBLIC_KEY_B64)
-        pipeline.verifyAndStage(manifest, artifact).getOrThrow()
-
-        if (root.optBoolean("dryRun", false)) {
-            pipeline.markSelfTestPassed().getOrThrow()
-            return "OTA_VERIFIED:${manifest.releaseId}"
-        }
-
-        val installer = OtaInstaller(context)
-        val staged = installer.stageVerifiedArtifact(manifest, artifact, BuildConfig.IAC33_OTA_PUBLIC_KEY_B64)
-        beforeInstall?.invoke(manifest)
         try {
-            installer.launchInstaller(staged)
-        } catch (error: Exception) {
-            beforeInstall?.let { _ -> PendingOtaStore(context).clear() }
-            pipeline.rollback()
-            throw error
+            val pipeline = OtaPipeline(BuildConfig.IAC33_OTA_PUBLIC_KEY_B64)
+            pipeline.verifyAndStage(manifest, artifact).getOrThrow()
+
+            if (root.optBoolean("dryRun", false)) {
+                pipeline.markSelfTestPassed().getOrThrow()
+                return "OTA_VERIFIED:${manifest.releaseId}"
+            }
+
+            val installer = OtaInstaller(context)
+            val staged = installer.stageVerifiedArtifact(manifest, artifact, BuildConfig.IAC33_OTA_PUBLIC_KEY_B64)
+            beforeInstall?.invoke(manifest)
+            try {
+                installer.launchInstaller(staged)
+            } catch (error: Exception) {
+                beforeInstall?.let { _ -> PendingOtaStore(context).clear() }
+                pipeline.rollback()
+                throw error
+            }
+            return "OTA_INSTALL_REQUESTED:${manifest.releaseId}"
+        } finally {
+            artifact.delete()
         }
-        return "OTA_INSTALL_REQUESTED:${manifest.releaseId}"
     }
 
-    private fun download(ref: String, expectedSize: Long): ByteArray {
+    private fun download(ref: String, expectedSize: Long): File {
         var current = java.net.URI(ref)
-        repeat(MAX_REDIRECTS + 1) { hop ->
-            require(current.scheme.equals("https", ignoreCase = true)) { "OTA artifact must use HTTPS" }
-            require(isTrustedArtifactHost(current.host)) { "OTA artifact host is not trusted" }
+        val directory = File(context.cacheDir, "ota-downloads").apply { mkdirs() }
+        val file = File(directory, "download-${UUID.randomUUID()}.apk")
+        try {
+            repeat(MAX_REDIRECTS + 1) { hop ->
+                require(current.scheme.equals("https", ignoreCase = true)) { "OTA artifact must use HTTPS" }
+                require(isTrustedArtifactHost(current.host)) { "OTA artifact host is not trusted" }
 
-            val connection = (current.toURL().openConnection() as HttpURLConnection).apply {
-                connectTimeout = 15_000
-                readTimeout = 60_000
-                instanceFollowRedirects = false
-            }
-
-            try {
-                val status = connection.responseCode
-                if (status in 300..399) {
-                    require(hop < MAX_REDIRECTS) { "Too many OTA redirects" }
-                    val location = connection.getHeaderField("Location")
-                    require(!location.isNullOrBlank()) { "OTA redirect missing Location" }
-                    current = current.resolve(location)
-                    return@repeat
+                val connection = (current.toURL().openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 15_000
+                    readTimeout = 60_000
+                    instanceFollowRedirects = false
                 }
 
-                require(status in 200..299) { "OTA download HTTP $status" }
-                val contentLength = connection.getHeaderFieldLong("Content-Length", -1L)
-                require(contentLength < 0L || contentLength == expectedSize) { "OTA Content-Length mismatch" }
-
-                connection.inputStream.use { input ->
-                    val output = java.io.ByteArrayOutputStream(expectedSize.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
-                    val buffer = ByteArray(8192)
-                    var total = 0L
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        total += read
-                        require(total <= expectedSize) { "OTA artifact larger than manifest" }
-                        output.write(buffer, 0, read)
+                try {
+                    val status = connection.responseCode
+                    if (status in 300..399) {
+                        require(hop < MAX_REDIRECTS) { "Too many OTA redirects" }
+                        val location = connection.getHeaderField("Location")
+                        require(!location.isNullOrBlank()) { "OTA redirect missing Location" }
+                        current = current.resolve(location)
+                        return@repeat
                     }
-                    require(total == expectedSize) { "OTA artifact size mismatch after download" }
-                    return output.toByteArray()
+
+                    require(status in 200..299) { "OTA download HTTP $status" }
+                    val contentLength = connection.getHeaderFieldLong("Content-Length", -1L)
+                    require(contentLength < 0L || contentLength == expectedSize) { "OTA Content-Length mismatch" }
+
+                    connection.inputStream.use { input ->
+                        file.outputStream().buffered().use { output ->
+                            val buffer = ByteArray(64 * 1024)
+                            var total = 0L
+                            while (true) {
+                                val read = input.read(buffer)
+                                if (read < 0) break
+                                total += read
+                                require(total <= expectedSize) { "OTA artifact larger than manifest" }
+                                output.write(buffer, 0, read)
+                            }
+                            require(total == expectedSize) { "OTA artifact size mismatch after download" }
+                        }
+                    }
+                    require(file.length() == expectedSize) { "OTA artifact size mismatch after staging" }
+                    return file
+                } finally {
+                    connection.disconnect()
                 }
-            } finally {
-                connection.disconnect()
             }
+            error("OTA redirect limit exceeded")
+        } catch (error: Throwable) {
+            file.delete()
+            throw error
         }
-        error("OTA redirect limit exceeded")
     }
 
     private fun isTrustedArtifactHost(host: String?): Boolean =
