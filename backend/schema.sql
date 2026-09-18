@@ -2,9 +2,11 @@ CREATE TABLE IF NOT EXISTS devices (
   id TEXT PRIMARY KEY,
   public_key_pem TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  last_seen_at TIMESTAMPTZ
+  last_seen_at TIMESTAMPTZ,
+  app_version TEXT
 );
 CREATE INDEX IF NOT EXISTS devices_last_seen_idx ON devices(last_seen_at);
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS app_version TEXT;
 
 CREATE TABLE IF NOT EXISTS commands (
   id TEXT PRIMARY KEY,
