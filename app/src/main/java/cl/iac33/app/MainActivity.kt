@@ -73,6 +73,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
@@ -288,6 +289,8 @@ private fun AiPanel(
                         onLinesChange(updated + ChatLine("assistant", "IA en modo de respaldo: " + detail))
                     }
                 }
+            } catch (error: TimeoutCancellationException) {
+                onLinesChange(updated + ChatLine("assistant", "IA: tiempo de espera agotado (12 s)."))
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
