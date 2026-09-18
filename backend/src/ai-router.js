@@ -146,11 +146,9 @@ async function callOpenAiCompatible(url, key, model, messages, timeoutMs) {
   } finally { clearTimeout(timer); }
 }
 export async function generateWithFreePool({ messages, timeoutMs = 18000 }) {
-  const configuredOrder = parseList(
-    process.env.AI_PROVIDER_ORDER,
-    FREE_PROVIDER_DEFAULTS.join(',')
-  );
-  const order = [...new Set([...configuredOrder, ...FREE_PROVIDER_DEFAULTS])];
+  const order = [...new Set(
+    parseList(process.env.AI_PROVIDER_ORDER, FREE_PROVIDER_DEFAULTS.join(','))
+  )];
   const diagnostics = [];
   const totalBudgetMs = Math.min(
     Math.max(Number(process.env.AI_TOTAL_TIMEOUT_MS || 7000), 2500),
