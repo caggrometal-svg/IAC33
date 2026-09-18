@@ -1,5 +1,6 @@
 package cl.iac33.app.ai
 
+import android.util.Log
 import cl.iac33.app.core.AiRequest
 import cl.iac33.app.core.AiResult
 import cl.iac33.app.core.OperationError
@@ -43,6 +44,8 @@ class RemoteBackendProvider(
                 setRequestProperty("Accept", "application/json")
             }
 
+            Log.d(TAG, "AI remote request start timeoutMs=" + request.timeoutMs + " messages=" + request.messages.size)
+
             val messages = JSONArray()
             request.messages.forEach { message ->
                 messages.put(JSONObject().put("role", message.role).put("content", message.content))
@@ -56,12 +59,17 @@ class RemoteBackendProvider(
             val json = if (raw.isNotBlank()) JSONObject(raw) else JSONObject()
             if (status !in 200..299) {
                 val error = json.optString("error", "AI backend error")
+                Log.e(TAG, "AI remote HTTP " + status + " endpoint=" + baseUrl.trimEnd('/') + "/v1/ai/generate body=" + raw.take(500))
                 val operationError = if (status == 429) OperationError.RATE_LIMIT else OperationError.PROVIDER
-                return@withContext OperationResult.Failure(operationError, error)
+                return@withContext OperationResult.Failure(operationError, "HTTP " + status + " · " + error)
             }
 
             val text = json.optString("text", "")
-            if (text.isBlank()) return@withContext OperationResult.Failure(OperationError.PROVIDER, "Empty AI response")
+            if (text.isBlank()) {
+                Log.e(TAG, "AI remote empty response HTTP " + status + " body=" + raw.take(500))
+                return@withContext OperationResult.Failure(OperationError.PROVIDER, "Empty AI response")
+            }
+            Log.d(TAG, "AI remote success HTTP " + status + " provider=" + json.optString("provider") + " model=" + json.optString("model"))
             OperationResult.Success(
                 AiResult(
                     provider = json.optString("provider").ifBlank { id },
@@ -74,10 +82,15 @@ class RemoteBackendProvider(
             // Compose cancellation is lifecycle control, not an AI/network failure.
             throw error
         } catch (error: Exception) {
+            Log.e(TAG, "AI remote exception " + error.javaClass.simpleName + ": " + error.message, error)
             val operationError = if (error is java.net.SocketTimeoutException) OperationError.TIMEOUT else OperationError.NETWORK
             OperationResult.Failure(operationError, error.message ?: "AI backend request failed")
         } finally {
             connection?.disconnect()
         }
+    }
+
+    companion object {
+        private const val TAG = "IAC33-AI"
     }
 }
