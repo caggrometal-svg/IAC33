@@ -45,7 +45,16 @@ jobs:
           set -euo pipefail
           data="$(curl -fsS --retry 3 -H "Authorization: Bearer $LAMBDA_API_KEY" "$LAMBDA_API_BASE/instance-types")"
           entry="$(jq -er --arg type "$LAMBDA_GPU_TYPE" '.data | to_entries[] | select(.value.instance_type.name == $type)' <<<"$data")"
-          region="$(jq -er '.value.regions_with_capacity_available[0].name' <<<"$entry")"
+          available_regions="$(jq -er -r '.value.regions_with_capacity_available[].name' <<<"$entry" | sort -u)"
+          region=""
+          for candidate in us-west-1 us-west-2 us-south-1 us-south-2 us-south-3 us-midwest-1 us-east-2 us-east-1; do
+            if grep -Fxq "$candidate" <<<"$available_regions"; then
+              region="$candidate"
+              break
+            fi
+          done
+          region="${region:-$(head -n 1 <<<"$available_regions")}"
+          test -n "$region"
           price="$(jq -er '.value.instance_type.price_cents_per_hour | tonumber / 100' <<<"$entry")"
           echo "region=$region" >> "$GITHUB_OUTPUT"
           echo "price=$price" >> "$GITHUB_OUTPUT"
