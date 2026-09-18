@@ -51,9 +51,19 @@ jobs:
           keytool -list -keystore "$KEYSTORE_PATH" -storepass "$KEYSTORE_PASSWORD" >/dev/null
           OTA_PUBLIC_KEY_B64="$(sed -n 's/^IAC33_OTA_PUBLIC_KEY_B64=//p' gradle.properties | head -n1)"
           test -n "$OTA_PUBLIC_KEY_B64"
+          BASE_VERSION="$(grep -oE 'versionName = [^\n]+' app/build.gradle.kts | head -n1 | sed -E 's/.*orElse\("([^"]+)"\).*/\1/' )"
+          if [ -z "$BASE_VERSION" ]; then BASE_VERSION="$(grep -oE 'versionName = "[0-9.]+"' app/build.gradle.kts | head -n1 | sed -E 's/.*"([0-9.]+)".*/\1/' )"; fi
+          test -n "$BASE_VERSION"
+          IFS=. read -r VMAJOR VMINOR VPATCH VEXTRA <<EOF
+$BASE_VERSION
+EOF
+          VMAJOR="${VMAJOR:-0}"; VMINOR="${VMINOR:-0}"; VPATCH="${VPATCH:-0}"
+          OTA_VERSION_NAME="${VMAJOR}.${VMINOR}.${VPATCH}.${GITHUB_RUN_NUMBER}"
+          echo "IAC33_VERSION_NAME=$OTA_VERSION_NAME" >> "$GITHUB_ENV"
           printf '%s' "$OTA_PUBLIC_KEY_B64" | base64 --decode > "$RUNNER_TEMP/iac33-ota-public-key.der"
           openssl pkey -pubin -inform DER -in "$RUNNER_TEMP/iac33-ota-public-key.der" -text -noout >/dev/null
           gradle assembleRelease --no-daemon --stacktrace --console=plain \
+            -PIAC33_VERSION_NAME="$OTA_VERSION_NAME" \
             -PIAC33_OTA_PUBLIC_KEY_B64="$OTA_PUBLIC_KEY_B64" \
             -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
             -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
@@ -186,7 +196,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          VERSION_NAME="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n1)"
+          VERSION_NAME="${OTA_VERSION_NAME:-$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n1)}"
           test -n "$VERSION_NAME"
           TAG="ota-$VERSION_NAME-$GITHUB_RUN_NUMBER"
           RELEASE_ID="$TAG"
