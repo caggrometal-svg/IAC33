@@ -80,7 +80,7 @@ $KEY_PASSWORD
 changeit
 EOF
             test -n "$BRIDGE_ALIAS"
-            keytool -importkeystore -noprompt               -srckeystore "$RUNNER_TEMP/bridge-key-build.raw" -srcstoretype JKS               -srcstorepass "$BRIDGE_SRC_PASS" -srcalias "$BRIDGE_ALIAS" -srckeypass "$KEY_PASSWORD"               -destkeystore "$RUNNER_TEMP/bridge-key-build.p12" -deststoretype PKCS12               -deststorepass "$BRIDGE_PASSWORD" -destkeypass "$BRIDGE_PASSWORD" >/dev/null 2>&1
+            keytool -importkeystore -noprompt               -srckeystore "$RUNNER_TEMP/bridge-key-build.raw" -srcstoretype JKS               -srcstorepass "$BRIDGE_SRC_PASS" -srcalias "$BRIDGE_ALIAS" -srckeypass "$KEY_PASSWORD"               -destkeystore "$RUNNER_TEMP/bridge-key-build.p12" -deststoretype PKCS12               -deststorepass "$KEY_PASSWORD" -destkeypass "$KEY_PASSWORD" >/dev/null 2>&1
           elif openssl pkcs12 -in "$RUNNER_TEMP/bridge-key-build.raw" -nocerts -nodes -passin pass: -out "$RUNNER_TEMP/bridge-key-build.pem" 2>/dev/null; then
             :
           else
