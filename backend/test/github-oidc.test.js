@@ -16,7 +16,7 @@ function token(overrides = {}) {
     repository_id: '1372305375',
     repository_owner: 'caggrometal-svg',
     repository_owner_id: '322356974',
-    sub: 'repo:caggrometal-svg@322356974/IAC33@1372305375:ref:refs/heads/main',
+    sub: 'repo:caggrometal-svg/IAC33:ref:refs/heads/main',
     ref: 'refs/heads/main',
     ref_type: 'branch',
     event_name: 'push',
