@@ -7,7 +7,8 @@ const DEFAULT_REPOSITORY = 'caggrometal-svg/IAC33';
 const DEFAULT_REPOSITORY_ID = '1372305375';
 const DEFAULT_REPOSITORY_OWNER = 'caggrometal-svg';
 const DEFAULT_REPOSITORY_OWNER_ID = '322356974';
-const DEFAULT_SUBJECT = 'repo:caggrometal-svg/IAC33:ref:refs/heads/main';
+const LEGACY_SUBJECT = 'repo:caggrometal-svg/IAC33:ref:refs/heads/main';
+const IMMUTABLE_SUBJECT = 'repo:caggrometal-svg@322356974/IAC33@1372305375:ref:refs/heads/main';
 const DEFAULT_WORKFLOW_REF = 'caggrometal-svg/IAC33/.github/workflows/ota-release.yml@refs/heads/main';
 const DEFAULT_WORKFLOW = 'IAC33 OTA Release';
 const CLOCK_SKEW_SECONDS = 60;
@@ -35,6 +36,12 @@ async function fetchJwks(force = false) {
   return jwksCache.keys;
 }
 
+function subjectMatches(value) {
+  const configured = process.env.GITHUB_OIDC_SUBJECT;
+  const expected = configured ? [configured] : [IMMUTABLE_SUBJECT, LEGACY_SUBJECT];
+  return expected.some((candidate) => constantTimeJsonValue(value, candidate));
+}
+
 function validateClaims(claims, {
   audience = process.env.GITHUB_OIDC_AUDIENCE || DEFAULT_AUDIENCE,
   repository = DEFAULT_REPOSITORY,
@@ -43,7 +50,6 @@ function validateClaims(claims, {
   repositoryId = process.env.GITHUB_OIDC_REPOSITORY_ID || DEFAULT_REPOSITORY_ID,
   repositoryOwner = DEFAULT_REPOSITORY_OWNER,
   repositoryOwnerId = DEFAULT_REPOSITORY_OWNER_ID,
-  subject = process.env.GITHUB_OIDC_SUBJECT || DEFAULT_SUBJECT,
 } = {}) {
   const now = Math.floor(Date.now() / 1000);
   if (!constantTimeJsonValue(claims.iss, ISSUER)) return false;
@@ -54,7 +60,7 @@ function validateClaims(claims, {
   if (!constantTimeJsonValue(claims.repository_owner_id, repositoryOwnerId)) return false;
   if (!constantTimeJsonValue(claims.ref, 'refs/heads/main')) return false;
   if (!constantTimeJsonValue(claims.ref_type, 'branch')) return false;
-  if (!constantTimeJsonValue(claims.sub, subject)) return false;
+  if (!subjectMatches(claims.sub)) return false;
   if (claims.event_name !== 'push' && claims.event_name !== 'workflow_dispatch') return false;
   if (!constantTimeJsonValue(claims.workflow_ref, workflowRef)) return false;
   if (!constantTimeJsonValue(claims.workflow, workflow)) return false;
