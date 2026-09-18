@@ -13,7 +13,12 @@ function token(overrides = {}) {
     iss: 'https://token.actions.githubusercontent.com',
     aud: 'iac33-backend',
     repository: 'caggrometal-svg/IAC33',
+    repository_id: '1372305375',
+    repository_owner: 'caggrometal-svg',
+    repository_owner_id: '322356974',
     ref: 'refs/heads/main',
+    ref_type: 'branch',
+    event_name: 'push',
     workflow_ref: 'caggrometal-svg/IAC33/.github/workflows/ota-release.yml@refs/heads/main',
     workflow: 'IAC33 OTA Release',
     iat: Math.floor(Date.now() / 1000),
@@ -50,4 +55,12 @@ test('rejects a token from another branch', async () => {
 
 test('rejects a token from another workflow', async () => {
   assert.equal(await verifyGitHubActionsToken(token({ workflow: 'Other Workflow' })), false);
+});
+
+test('rejects a token from another repository id', async () => {
+  assert.equal(await verifyGitHubActionsToken(token({ repository_id: '999999999' })), false);
+});
+
+test('rejects a token from a disallowed event', async () => {
+  assert.equal(await verifyGitHubActionsToken(token({ event_name: 'pull_request' })), false);
 });
