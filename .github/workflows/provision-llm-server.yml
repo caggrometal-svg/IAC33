@@ -8,11 +8,6 @@ on:
         required: true
         default: 'gpu_1x_h100_pcie'
         type: string
-      keep_alive:
-        description: 'Keep the GPU server running after provisioning'
-        required: true
-        default: true
-        type: boolean
 
 jobs:
   provision:
@@ -97,12 +92,54 @@ jobs:
           echo "instance_id=$id" >> "$GITHUB_OUTPUT"
           echo "instance_id=$id"
 
-      - name: Wait for instance and report endpoint
+      - name: Wait for instance and verify inference
         shell: bash
         env:
           LAMBDA_API_KEY: ${{ secrets.LAMBDA_API_KEY }}
+          IAC33_OLLAMA_API_KEY: ${{ secrets.IAC33_OLLAMA_API_KEY }}
           INSTANCE_ID: ${{ steps.launch.outputs.instance_id }}
           REGION: ${{ steps.capacity.outputs.region }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            response="$(curl -fsS --retry 2 -H "Authorization: Bearer $LAMBDA_API_KEY" "$LAMBDA_API_BASE/instances/$INSTANCE_ID" || true)"
+            ip="$(jq -r '.data.ip // empty' <<<"$response")"
+            status="$(jq -r '.data.status // empty' <<<"$response")"
+            if [[ -n "$ip" && "$status" == "active" ]]; then
+              host="$ip.sslip.io"
+              echo "Instance active: $host"
+              ready=0
+              for probe in $(seq 1 60); do
+                tags="$(curl -fsS --max-time 10                   -H "X-IAC33-LLM-Key: $IAC33_OLLAMA_API_KEY"                   "https://$host/api/tags" 2>/dev/null || true)"
+                if jq -e --arg model "$OLLAMA_MODEL" '.models[]? | select(.name == $model or (.name | startswith($model + ":")))' <<<"$tags" >/dev/null 2>&1; then
+                  ready=1
+                  break
+                fi
+                sleep 10
+              done
+              if [[ "$ready" != "1" ]]; then
+                echo "ERROR: Ollama model did not become ready within the verification window."
+                exit 1
+              fi
+
+              payload="$(jq -n --arg model "$OLLAMA_MODEL" '{
+                model: $model,
+                messages: [{role: "user", content: "ping"}],
+                stream: false
+              }')"
+              chat="$(curl -fsS --max-time 90                 -H "X-IAC33-LLM-Key: $IAC33_OLLAMA_API_KEY"                 -H "content-type: application/json"                 --data "$payload"                 "https://$host/v1/chat/completions")"
+              jq -e '.choices[0].message.content // empty' <<<"$chat" >/dev/null
+
+              echo "IAC33_OLLAMA_ENDPOINT=https://$host"
+              echo "IAC33_OLLAMA_MODEL=$OLLAMA_MODEL"
+              echo "instance_id=$INSTANCE_ID"
+              echo "region=$REGION"
+              echo "GPU=$LAMBDA_GPU_TYPE"
+              echo "IAC33_LLM_STATUS=ready"
+              break
+            fi
+            sleep 10
+          done
         run: |
           set -euo pipefail
           for attempt in $(seq 1 60); do
