@@ -23,6 +23,7 @@ import cl.iac33.app.ai.AiEngineImpl
 import cl.iac33.app.core.AiMessage
 import cl.iac33.app.core.AiRequest
 import cl.iac33.app.core.OperationResult
+import cl.iac33.app.core.OperationError
 import cl.iac33.app.core.connectivity.ConnectivityMonitor
 import cl.iac33.app.core.connectivity.ConnectivityStatus
 import cl.iac33.app.core.location.LocationReader
@@ -171,7 +172,7 @@ private fun AiPanel() {
                             val result = runCatching {
                                 engine.generate(AiRequest(UUID.randomUUID().toString(), messages))
                             }.getOrElse { throwable ->
-                                OperationResult.Failure(throwable.message ?: "Error interno de IA")
+                                OperationResult.Failure(OperationError.INTERNAL, throwable.message ?: "Error interno de IA")
                             }
                             when (result) {
                                 is OperationResult.Success -> lines = lines + ChatLine("assistant", result.value.text.orEmpty().ifBlank { "Respuesta vacía." })
