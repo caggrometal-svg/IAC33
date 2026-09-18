@@ -218,3 +218,29 @@ test('rejects unsafe configurable endpoints and uses the trusted Kilo endpoint',
   assert.equal(result.text, 'trusted');
   assert.equal(requestedUrl, 'https://api.kilo.ai/api/gateway/chat/completions');
 });
+
+
+test('uses private Ollama before public fallback providers', async () => {
+  process.env.AI_PROVIDER_ORDER = 'ollama,kilo';
+  process.env.IAC33_OLLAMA_ENDPOINT = 'https://llm.example.test';
+  process.env.IAC33_OLLAMA_API_KEY = 'test-ollama-key';
+  process.env.IAC33_OLLAMA_MODEL = 'gpt-oss:20b';
+  let requestedUrl = '';
+  let requestHeaders = {};
+  globalThis.fetch = async (url, options) => {
+    requestedUrl = String(url);
+    requestHeaders = options.headers;
+    const body = JSON.parse(options.body);
+    assert.equal(body.model, 'gpt-oss:20b');
+    assert.equal(body.stream, false);
+    return new Response(
+      JSON.stringify({ choices: [{ message: { content: 'private-ok' } }], model: 'gpt-oss:20b' }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+  };
+  const result = await router.generateWithFreePool({ messages, timeoutMs: 3000 });
+  assert.equal(result.provider, 'ollama');
+  assert.equal(result.text, 'private-ok');
+  assert.equal(requestedUrl, 'https://llm.example.test/v1/chat/completions');
+  assert.equal(requestHeaders['x-iac33-llm-key'], 'test-ollama-key');
+});
