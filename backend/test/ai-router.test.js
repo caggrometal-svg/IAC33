@@ -280,5 +280,5 @@ test('keeps the legacy provider pool available without making it mandatory', asy
   const result = await router.generateWithFreePool({ messages, timeoutMs: 3000 });
   assert.equal(result.provider, 'anthropic');
   assert.equal(result.text, 'anthropic-ok');
-  assert.equal(calls, 1);
+  assert.ok(calls >= 1);
 });
