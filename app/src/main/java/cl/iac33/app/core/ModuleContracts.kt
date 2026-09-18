@@ -1,7 +1,7 @@
 package cl.iac33.app.core
 
 data class AiMessage(val role: String, val content: String)
-data class AiRequest(val conversationId: String, val messages: List<AiMessage>, val timeoutMs: Long = 45_000)
+data class AiRequest(val conversationId: String, val messages: List<AiMessage>, val timeoutMs: Long = 20_000)
 data class AiResult(val provider: String?, val model: String?, val text: String?, val latencyMs: Long, val error: OperationError? = null)
 
 interface AiEngine { suspend fun generate(request: AiRequest): OperationResult<AiResult> }
