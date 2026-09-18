@@ -11,6 +11,28 @@ const providers = {
 };
 function providerError(status, message) { const error = new Error(message); error.status = status; return error; }
 
+const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const FREE_PROVIDER_DEFAULTS = ['kilo', 'pollinations', 'horde'];
+const parseList = (value, fallback) =>
+  String(value || fallback).split(',').map((item) => item.trim()).filter(Boolean);
+
+function isRetryable(error) {
+  if (error?.name === 'AbortError') return false;
+  if (RETRYABLE_STATUSES.has(Number(error?.status))) return true;
+  return !Number.isFinite(Number(error?.status));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function providerTimeoutMs(id) {
+  if (id === 'kilo') return Math.min(Math.max(Number(process.env.AI_KILO_TIMEOUT_MS || 2500), 1000), 6000);
+  if (id === 'horde') return Math.min(Math.max(Number(process.env.AI_HORDE_TIMEOUT_MS || 4500), 2000), 8000);
+  if (id === 'pollinations') return Math.min(Math.max(Number(process.env.AI_POLLINATIONS_TIMEOUT_MS || 2500), 1000), 6000);
+  return Math.min(Math.max(Number(process.env.AI_PROVIDER_TIMEOUT_MS || 2200), 900), 7000);
+}
+
 async function readJsonBounded(response) {
   const text = await response.text();
   if (Buffer.byteLength(text, 'utf8') > 2 * 1024 * 1024) throw providerError(502, 'Provider response too large');
@@ -40,7 +62,8 @@ async function callKilo(messages, timeoutMs) {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const model = process.env.KILO_MODEL || 'kilo-auto/free';
   try {
-    const response = await fetch('https://api.kilo.ai/api/gateway/chat/completions', {
+    const endpoint = parseList(process.env.KILO_ENDPOINTS, 'https://api.kilo.ai/api/gateway/chat/completions')[0]; 
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ model, messages, stream: false, max_tokens: Math.min(Number(process.env.KILO_MAX_TOKENS || 512), 1024) }),
@@ -58,7 +81,8 @@ async function callPollinations(messages, timeoutMs) {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const model = process.env.POLLINATIONS_MODEL || 'openai';
   try {
-    const response = await fetch('https://text.pollinations.ai/openai', {
+    const endpoint = parseList(process.env.POLLINATIONS_ENDPOINTS, 'https://text.pollinations.ai/openai')[0];
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ model, messages }),
@@ -87,7 +111,8 @@ async function callAiHorde(messages, timeoutMs) {
       }
     };
     if (model) payload.models = [model];
-    const response = await fetch('https://aihorde.net/api/v2/generate/text/async', {
+    const endpoint = parseList(process.env.AI_HORDE_ENDPOINTS, 'https://aihorde.net').find(Boolean);
+    const response = await fetch(endpoint.replace(/\/$/, '') + '/api/v2/generate/text/async', {
       method: 'POST',
       headers: { apikey: apiKey, 'Client-Agent': 'IAC33:2.0', 'content-type': 'application/json' },
       body: JSON.stringify(payload),
@@ -97,7 +122,7 @@ async function callAiHorde(messages, timeoutMs) {
     if (!response.ok || !json.id) throw providerError(response.status || 502, json?.message || 'AI Horde submit failed');
     const deadline = Date.now() + timeoutMs - 250;
     while (Date.now() < deadline) {
-      const statusResponse = await fetch(`https://aihorde.net/api/v2/generate/text/status/${encodeURIComponent(json.id)}`, { headers: { 'Client-Agent': 'IAC33:2.0' }, signal: controller.signal });
+      const statusResponse = await fetch(`${endpoint.replace(/\/$/, '')}/api/v2/generate/text/status/${encodeURIComponent(json.id)}`, { headers: { 'Client-Agent': 'IAC33:2.0' }, signal: controller.signal });
       const status = await readJsonBounded(statusResponse).catch(() => ({}));
       if (!statusResponse.ok) throw providerError(statusResponse.status || 502, status?.message || 'AI Horde status failed');
       if (status.done) {
@@ -107,7 +132,7 @@ async function callAiHorde(messages, timeoutMs) {
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
-    try { await fetch(`https://aihorde.net/api/v2/generate/text/status/${encodeURIComponent(json.id)}`, { method: 'DELETE', headers: { 'Client-Agent': 'IAC33:2.0' } }); } catch {}
+    try { await fetch(`${endpoint.replace(/\/$/, '')}/api/v2/generate/text/status/${encodeURIComponent(json.id)}`, { method: 'DELETE', headers: { 'Client-Agent': 'IAC33:2.0' } }); } catch {}
     throw providerError(504, 'AI Horde generation timeout');
   } finally { clearTimeout(timer); }
 }
@@ -121,10 +146,17 @@ async function callOpenAiCompatible(url, key, model, messages, timeoutMs) {
   } finally { clearTimeout(timer); }
 }
 export async function generateWithFreePool({ messages, timeoutMs = 18000 }) {
-  const configuredOrder = (process.env.AI_PROVIDER_ORDER || 'kilo,pollinations,horde,openrouter,gemini,cloudflare,groq,freeinference,animica').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
-  const order = [...new Set(configuredOrder)]; const diagnostics = [];
-  const totalBudgetMs = Math.min(Math.max(Number(process.env.AI_TOTAL_TIMEOUT_MS || 7000), 1000), 120000);
-  const deadline = Date.now() + totalBudgetMs;
+  const configuredOrder = parseList(
+    process.env.AI_PROVIDER_ORDER,
+    FREE_PROVIDER_DEFAULTS.join(',')
+  );
+  const order = [...new Set([...configuredOrder, ...FREE_PROVIDER_DEFAULTS])];
+  const diagnostics = [];
+  const totalBudgetMs = Math.min(
+    Math.max(Number(process.env.AI_TOTAL_TIMEOUT_MS || 7000), 2500),
+    12000
+  );
+  const deadline = Date.now() + Math.min(timeoutMs, totalBudgetMs);
   const available = order.filter((id) => {
     const provider = providers[id];
     if (!provider || (provider.key && !process.env[provider.key])) {
@@ -133,66 +165,76 @@ export async function generateWithFreePool({ messages, timeoutMs = 18000 }) {
     }
     return true;
   });
+
   if (!available.length) {
-    const error = new Error('AI_PROVIDERS_UNAVAILABLE'); error.diagnostics = diagnostics; throw error;
+    const error = new Error('AI_PROVIDERS_UNAVAILABLE');
+    error.diagnostics = diagnostics;
+    throw error;
   }
 
-  // Fast path: race the first free/community providers instead of waiting
-  // sequentially. The first valid answer wins, which makes conversation
-  // latency much closer to a normal chat service when one provider is slow.
-  const wave = available.slice(0, Math.min(3, available.length));
-  const attempts = wave.map(async (id) => {
+  async function attemptProvider(id) {
     const provider = providers[id];
-    const remainingMs = deadline - Date.now();
-    const providerTimeoutMs =
-      id === 'kilo' ? Math.min(Math.max(Number(process.env.AI_KILO_TIMEOUT_MS || 2500), 1200), 6000) :
-      id === 'horde' ? Math.min(Math.max(Number(process.env.AI_HORDE_TIMEOUT_MS || 4500), 2500), 8000) :
-      id === 'pollinations' ? Math.min(Math.max(Number(process.env.AI_POLLINATIONS_TIMEOUT_MS || 2500), 1200), 6000) :
-      Math.min(Math.max(Number(process.env.AI_PROVIDER_TIMEOUT_MS || 2200), 900), 7000);
-    const attemptTimeoutMs = Math.min(timeoutMs, providerTimeoutMs, Math.max(1000, remainingMs));
-    const started = Date.now();
-    try {
-      const result = await provider.call(messages, attemptTimeoutMs);
-      return { ok: true, id, result, latencyMs: Date.now() - started };
-    } catch (error) {
-      return { ok: false, id, error, latencyMs: Date.now() - started };
+    const maxAttempts = Math.min(
+      Math.max(Number(process.env.AI_PROVIDER_RETRIES || 2), 1),
+      3
+    );
+    let lastError = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+      const attemptTimeoutMs = Math.min(
+        providerTimeoutMs(id),
+        timeoutMs,
+        remainingMs
+      );
+      try {
+        return await provider.call(messages, attemptTimeoutMs);
+      } catch (error) {
+        lastError = error;
+        if (attempt >= maxAttempts || !isRetryable(error)) break;
+        const remainingAfterFailure = deadline - Date.now();
+        if (remainingAfterFailure <= 50) break;
+        await sleep(Math.min(150 * (2 ** (attempt - 1)), 400, remainingAfterFailure - 1));
+      }
     }
-  });
+    throw lastError || providerError(504, 'Provider timeout');
+  }
 
-  const pending = attempts.map((promise) => ({ promise }));
-  while (pending.length) {
-    const raced = await Promise.race(pending.map(async (entry) => ({ entry, settled: await entry.promise })));
-    const removeIndex = pending.indexOf(raced.entry);
-    if (removeIndex >= 0) pending.splice(removeIndex, 1);
-    const settled = raced.settled;
-    if (settled.ok) {
-      diagnostics.push({ provider: settled.id, state: 'RESPONDING', latencyMs: settled.latencyMs });
-      return { ...settled.result, provider: settled.id, diagnostics };
-    }
-    diagnostics.push({
-      provider: settled.id,
-      state: settled.error?.name === 'AbortError' ? 'TIMEOUT' : settled.error?.status === 429 ? 'RATE_LIMITED' : 'FAILED',
-      status: settled.error?.status || 500,
-      latencyMs: settled.latencyMs
+  // Three free sources are raced together. A 503/429/timeout is retried
+  // locally; when retries are exhausted the failed source is discarded and
+  // another source continues. Provider internals never reach the chat bubble.
+  const batchSize = Math.min(3, available.length);
+  for (let offset = 0; offset < available.length; offset += batchSize) {
+    const batch = available.slice(offset, offset + batchSize);
+    const pending = batch.map((id) => {
+      const started = Date.now();
+      const promise = attemptProvider(id)
+        .then((result) => ({ ok: true, id, result, latencyMs: Date.now() - started }))
+        .catch((error) => ({ ok: false, id, error, latencyMs: Date.now() - started }));
+      return { id, promise };
     });
-  }
 
-  // Second wave: remaining providers are true sequential fallbacks, preserving
-  // quota and avoiding a thundering herd against every configured service.
-  for (const id of available.slice(3)) {
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) break;
-    const provider = providers[id];
-    const providerTimeoutMs = Math.min(Math.max(Number(process.env.AI_PROVIDER_TIMEOUT_MS || 2200), 900), 7000);
-    const attemptTimeoutMs = Math.min(timeoutMs, providerTimeoutMs, remainingMs);
-    const started = Date.now();
-    try {
-      const result = await provider.call(messages, attemptTimeoutMs);
-      diagnostics.push({ provider: id, state: 'RESPONDING', latencyMs: Date.now() - started });
-      return { ...result, provider: id, diagnostics };
-    } catch (error) {
-      diagnostics.push({ provider: id, state: error?.name === 'AbortError' ? 'TIMEOUT' : error?.status === 429 ? 'RATE_LIMITED' : 'FAILED', status: error?.status || 500, latencyMs: Date.now() - started });
+    while (pending.length) {
+      const settled = await Promise.race(
+        pending.map((entry) => entry.promise)
+      );
+      const index = pending.findIndex((entry) => entry.id === settled.id);
+      if (index >= 0) pending.splice(index, 1);
+
+      diagnostics.push({
+        provider: settled.id,
+        state: settled.ok ? 'RESPONDING' :
+          settled.error?.status === 429 ? 'RATE_LIMITED' :
+          settled.error?.name === 'AbortError' ? 'TIMEOUT' : 'FAILED',
+        status: settled.ok ? 200 : (settled.error?.status || 500),
+        latencyMs: settled.latencyMs
+      });
+
+      if (settled.ok) return { ...settled.result, provider: settled.id };
     }
   }
-  const error = new Error('AI_PROVIDERS_UNAVAILABLE'); error.diagnostics = diagnostics; throw error;
+
+  const error = new Error('AI_PROVIDERS_UNAVAILABLE');
+  error.diagnostics = diagnostics;
+  throw error;
 }
