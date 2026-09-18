@@ -40,6 +40,9 @@ for i in $(seq 1 60); do
   sleep 2
 done
 
+command -v nvidia-smi >/dev/null
+nvidia-smi -L >/dev/null
+
 ollama pull "$MODEL"
 
 # Public TLS/auth gateway. The Lambda cloud firewall must allow TCP/443.
@@ -73,6 +76,17 @@ ufw --force enable
 
 # Small local health proof, without printing the secret.
 curl -fsS --max-time 10 http://127.0.0.1:11434/api/tags >/dev/null
+
+cat >/tmp/iac33-smoke.json <<JSON
+{"model":"$MODEL","messages":[{"role":"user","content":"ping"}],"stream":false}
+JSON
+curl -fsS --max-time 60 \
+  -H "X-IAC33-LLM-Key: $API_KEY" \
+  -H "content-type: application/json" \
+  --data-binary @/tmp/iac33-smoke.json \
+  "https://$PUBLIC_HOST/v1/chat/completions" \
+  | grep -q '"choices"'
+rm -f /tmp/iac33-smoke.json
 
 cat >/etc/iac33-llm.env <<EOF
 IAC33_OLLAMA_ENDPOINT=https://${PUBLIC_HOST}
