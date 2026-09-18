@@ -244,3 +244,41 @@ test('uses private Ollama before public fallback providers', async () => {
   assert.equal(requestedUrl, 'https://llm.example.test/v1/chat/completions');
   assert.equal(requestHeaders['x-iac33-llm-key'], 'test-ollama-key');
 });
+
+
+test('routes through the recovered Andrew2 Render backend', async () => {
+  process.env.AI_PROVIDER_ORDER = 'andrew2';
+  let requestedUrl = '';
+  globalThis.fetch = async (url, options) => {
+    requestedUrl = String(url);
+    assert.equal(options.headers['x-iac33-bridge'], 'IAC33/Andrew2');
+    return new Response(
+      JSON.stringify({ ok: true, provider: 'openai', model: 'gpt-5.6-luna', text: 'andrew2-ok' }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+  };
+  const result = await router.generateWithFreePool({ messages, timeoutMs: 2000 });
+  assert.equal(result.provider, 'andrew2');
+  assert.equal(result.text, 'andrew2-ok');
+  assert.equal(requestedUrl, 'https://andrew2-api.onrender.com/v1/ai/generate');
+});
+
+test('keeps the legacy provider pool available without making it mandatory', async () => {
+  process.env.AI_PROVIDER_ORDER = 'anthropic,deepseek,xai';
+  process.env.ANTHROPIC_API_KEY = 'test-anthropic';
+  process.env.DEEPSEEK_API_KEY = 'test-deepseek';
+  process.env.XAI_API_KEY = 'test-xai';
+  let calls = 0;
+  globalThis.fetch = async (url) => {
+    calls += 1;
+    const host = new URL(String(url)).hostname;
+    if (host === 'api.anthropic.com') {
+      return new Response(JSON.stringify({ content: [{ text: 'anthropic-ok' }], model: 'test' }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'unexpected' } }] }), { status: 200 });
+  };
+  const result = await router.generateWithFreePool({ messages, timeoutMs: 3000 });
+  assert.equal(result.provider, 'anthropic');
+  assert.equal(result.text, 'anthropic-ok');
+  assert.equal(calls, 1);
+});
