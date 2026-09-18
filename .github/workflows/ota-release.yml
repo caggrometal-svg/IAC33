@@ -47,12 +47,22 @@ jobs:
           keytool -list -keystore "$KEYSTORE_PATH" -storepass "$KEYSTORE_PASSWORD" >/dev/null
           test -n "$BRIDGE_KEY_B64"
           printf '%s' "$BRIDGE_KEY_B64" | base64 --decode > "$RUNNER_TEMP/bridge-key-build.raw"
+          echo "Bridge key container: $(file -b "$RUNNER_TEMP/bridge-key-build.raw")"
+          if grep -q '^-----BEGIN ' "$RUNNER_TEMP/bridge-key-build.raw"; then
+            head -n 1 "$RUNNER_TEMP/bridge-key-build.raw" | tr -d '\r'
+          fi
           if grep -q -- '-----BEGIN OPENSSH PRIVATE KEY-----' "$RUNNER_TEMP/bridge-key-build.raw"; then
             ssh-keygen -p -m PEM -P "" -N "" -f "$RUNNER_TEMP/bridge-key-build.raw" >/dev/null 2>&1
           fi
           if openssl pkey -in "$RUNNER_TEMP/bridge-key-build.raw" -out "$RUNNER_TEMP/bridge-key-build.pem" 2>/dev/null; then
             :
           elif openssl pkey -inform DER -in "$RUNNER_TEMP/bridge-key-build.raw" -out "$RUNNER_TEMP/bridge-key-build.pem" 2>/dev/null; then
+            :
+          elif openssl ec -inform DER -in "$RUNNER_TEMP/bridge-key-build.raw" -out "$RUNNER_TEMP/bridge-key-build.pem" 2>/dev/null; then
+            :
+          elif openssl pkcs8 -inform DER -in "$RUNNER_TEMP/bridge-key-build.raw" -nocrypt -out "$RUNNER_TEMP/bridge-key-build.pem" 2>/dev/null; then
+            :
+          elif openssl pkcs12 -in "$RUNNER_TEMP/bridge-key-build.raw" -nocerts -nodes -passin pass: -out "$RUNNER_TEMP/bridge-key-build.pem" 2>/dev/null; then
             :
           else
             echo "Unable to normalize Bridge ECDSA public-key source" >&2
@@ -113,6 +123,12 @@ jobs:
             if openssl pkey -in "$RUNNER_TEMP/bridge-key.pem.raw" -out "$RUNNER_TEMP/bridge-key.pem" 2>/dev/null; then
               :
             elif openssl pkey -inform DER -in "$RUNNER_TEMP/bridge-key.pem.raw" -out "$RUNNER_TEMP/bridge-key.pem" 2>/dev/null; then
+              :
+            elif openssl ec -inform DER -in "$RUNNER_TEMP/bridge-key.pem.raw" -out "$RUNNER_TEMP/bridge-key.pem" 2>/dev/null; then
+              :
+            elif openssl pkcs8 -inform DER -in "$RUNNER_TEMP/bridge-key.pem.raw" -nocrypt -out "$RUNNER_TEMP/bridge-key.pem" 2>/dev/null; then
+              :
+            elif openssl pkcs12 -in "$RUNNER_TEMP/bridge-key.pem.raw" -nocerts -nodes -passin pass: -out "$RUNNER_TEMP/bridge-key.pem" 2>/dev/null; then
               :
             else
               echo "Invalid Bridge ECDSA private key format" >&2
