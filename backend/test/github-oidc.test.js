@@ -42,8 +42,15 @@ test.beforeEach(() => {
 });
 test.after(() => { global.fetch = originalFetch; });
 
-test('accepts a valid IAC33 GitHub Actions OIDC token', async () => {
+test('accepts a valid IAC33 GitHub Actions OIDC token with legacy subject', async () => {
   assert.equal(await verifyGitHubActionsToken(token()), true);
+});
+
+test('accepts a valid IAC33 GitHub Actions OIDC token with immutable subject', async () => {
+  assert.equal(
+    await verifyGitHubActionsToken(token({ sub: 'repo:caggrometal-svg@322356974/IAC33@1372305375:ref:refs/heads/main' })),
+    true
+  );
 });
 
 test('rejects a token from another repository', async () => {
@@ -66,6 +73,9 @@ test('rejects a token from a disallowed event', async () => {
   assert.equal(await verifyGitHubActionsToken(token({ event_name: 'pull_request' })), false);
 });
 
-test('rejects a token with a different immutable subject', async () => {
-  assert.equal(await verifyGitHubActionsToken(token({ sub: 'repo:caggrometal-svg@322356974/IAC33@1372305375:ref:refs/heads/dev' })), false);
+test('rejects a token with an invalid immutable subject', async () => {
+  assert.equal(
+    await verifyGitHubActionsToken(token({ sub: 'repo:caggrometal-svg@322356974/IAC33@1372305375:ref:refs/heads/dev' })),
+    false
+  );
 });
