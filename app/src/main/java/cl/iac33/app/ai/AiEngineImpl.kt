@@ -12,13 +12,17 @@ class AiEngineImpl(
     private val engine: AiEngine = defaultEngine()
 ) : AiEngine {
     override suspend fun generate(request: AiRequest): OperationResult<AiResult> {
-        if (request.messages.isEmpty() || request.messages.all { it.content.isBlank() }) {
-            return OperationResult.Failure(OperationError.VALIDATION, "Prompt vacío")
+        if (request.messages.isEmpty() || request.messages.size > MAX_MESSAGES ||
+            request.messages.all { it.content.isBlank() } ||
+            request.messages.any { it.content.length > MAX_MESSAGE_CHARS }) {
+            return OperationResult.Failure(OperationError.VALIDATION, "Solicitud IA fuera de límites")
         }
         return engine.generate(request)
     }
 
     companion object {
+        private const val MAX_MESSAGES = 32
+        private const val MAX_MESSAGE_CHARS = 8_000
         private fun defaultEngine(): AiEngine {
             val context = IAC33Application.contextOrNull()
             return if (context != null) {
