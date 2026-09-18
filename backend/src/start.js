@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { server } from './server.js';
 import { Pool } from 'pg';
 
@@ -31,6 +32,20 @@ function shutdown(signal) {
   setTimeout(() => process.exit(1), 25_000).unref();
 }
 
+async function ensureDatabaseSchema() {
+  if (!startupPool) return;
+  const schemaUrl = new URL('../schema.sql', import.meta.url);
+  const schemaSql = await readFile(schemaUrl, 'utf8');
+  await startupPool.query('BEGIN');
+  try {
+    await startupPool.query(schemaSql);
+    await startupPool.query('COMMIT');
+  } catch (error) {
+    await startupPool.query('ROLLBACK').catch(() => {});
+    throw error;
+  }
+}
+
 async function warmDatabase() {
   if (!startupPool) {
     console.warn('IAC33 database warmup skipped: DATABASE_URL is not configured');
@@ -39,7 +54,9 @@ async function warmDatabase() {
   for (let attempt = 1; attempt <= STARTUP_DB_RETRIES; attempt += 1) {
     try {
       await startupPool.query({ text: 'SELECT 1', statement_timeout: STARTUP_DB_TIMEOUT_MS });
-      console.log(`IAC33 database ready on startup attempt ${attempt}`);
+      await ensureDatabaseSchema();
+      await startupPool.query({ text: 'SELECT 1', statement_timeout: STARTUP_DB_TIMEOUT_MS });
+      console.log(`IAC33 database ready and schema verified on startup attempt ${attempt}`);
       return;
     } catch (error) {
       console.error(`IAC33 database startup attempt ${attempt}/${STARTUP_DB_RETRIES} failed`, error?.message || error);
