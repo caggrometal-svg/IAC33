@@ -199,6 +199,7 @@ class RemoteControlEngine(
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("Accept", "application/json")
+            setRequestProperty("X-IAC33-App-Version", BuildConfig.VERSION_NAME)
             if (signed) {
                 setRequestProperty("X-Device-Id", identity.deviceId)
                 setRequestProperty("X-Device-Timestamp", timestamp.toString())
