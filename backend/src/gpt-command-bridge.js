@@ -28,8 +28,8 @@ function validateOtaPayload(payload) {
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return false;
   if (manifest.schemaVersion !== 1) return false;
   if (typeof manifest.releaseId !== 'string' || !ID_PATTERN.test(manifest.releaseId)) return false;
-  if (typeof manifest.appVersion !== 'string' || !/^\\d+(\\.\\d+){2,3}$/.test(manifest.appVersion)) return false;
-  if (typeof manifest.minimumSupportedVersion !== 'string' || !/^\\d+(\\.\\d+){2,3}$/.test(manifest.minimumSupportedVersion)) return false;
+  if (typeof manifest.appVersion !== 'string' || !/^\d+(\.\d+){2,3}$/.test(manifest.appVersion)) return false;
+  if (typeof manifest.minimumSupportedVersion !== 'string' || !/^\d+(\.\d+){2,3}$/.test(manifest.minimumSupportedVersion)) return false;
   if (typeof manifest.createdAt !== 'string' || !Number.isFinite(Date.parse(manifest.createdAt))) return false;
   if (typeof manifest.artifactRef !== 'string') return false;
   let artifactUrl;
