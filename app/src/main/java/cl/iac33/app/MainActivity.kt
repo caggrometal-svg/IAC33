@@ -54,25 +54,25 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             val iac33DarkColors = darkColorScheme(
-                primary = Color(0xFF7DD3FC),
-                onPrimary = Color(0xFF00202A),
-                primaryContainer = Color(0xFF123B46),
-                onPrimaryContainer = Color(0xFFB8ECFF),
-                secondary = Color(0xFFB9C7FF),
-                onSecondary = Color(0xFF18254A),
-                secondaryContainer = Color(0xFF29345D),
-                onSecondaryContainer = Color(0xFFDCE1FF),
-                tertiary = Color(0xFF9FE6D2),
-                onTertiary = Color(0xFF00382F),
-                tertiaryContainer = Color(0xFF155348),
-                onTertiaryContainer = Color(0xFFBAF2E3),
-                background = Color(0xFF080B10),
-                onBackground = Color(0xFFE7EAF0),
-                surface = Color(0xFF0D1118),
-                onSurface = Color(0xFFE7EAF0),
-                surfaceVariant = Color(0xFF171D27),
-                onSurfaceVariant = Color(0xFFB8C0CC),
-                outline = Color(0xFF3A4352)
+                primary = Color(0xFF38BDF8),
+                onPrimary = Color(0xFF020617),
+                primaryContainer = Color(0xFF0C4A6E),
+                onPrimaryContainer = Color(0xFFE0F2FE),
+                secondary = Color(0xFF818CF8),
+                onSecondary = Color(0xFF0F172A),
+                secondaryContainer = Color(0xFF312E81),
+                onSecondaryContainer = Color(0xFFE0E7FF),
+                tertiary = Color(0xFF2DD4BF),
+                onTertiary = Color(0xFF042F2E),
+                tertiaryContainer = Color(0xFF134E4A),
+                onTertiaryContainer = Color(0xFFCCFBF1),
+                background = Color(0xFF030712),
+                onBackground = Color(0xFFF8FAFC),
+                surface = Color(0xFF090D16),
+                onSurface = Color(0xFFF8FAFC),
+                surfaceVariant = Color(0xFF111827),
+                onSurfaceVariant = Color(0xFFCBD5E1),
+                outline = Color(0xFF334155)
             )
             MaterialTheme(colorScheme = iac33DarkColors) {
                 var selected by rememberSaveable { mutableIntStateOf(0) }
