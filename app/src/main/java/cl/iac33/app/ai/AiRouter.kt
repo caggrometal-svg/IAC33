@@ -16,8 +16,19 @@ class AiRouter(
             return OperationResult.Failure(OperationError.PROVIDER, "No AI providers configured")
         }
 
+        val userText = request.messages.lastOrNull { it.role == "user" }?.content.orEmpty()
+        val intent = IntentClassifier.classify(userText)
+
+        // Local-capability intents are answered locally first for lower latency.
+        // General questions keep the configured preference (remote-first by default).
+        val orderedProviders = if (intent != AiIntent.GENERAL) {
+            providers.sortedBy { if (it.id == "local-fallback") 0 else 1 }
+        } else {
+            providers
+        }
+
         var lastFailure: OperationResult.Failure? = null
-        for (provider in providers) {
+        for (provider in orderedProviders) {
             val available = try {
                 provider.isAvailable()
             } catch (error: Exception) {
@@ -34,10 +45,16 @@ class AiRouter(
                 when (val result = provider.generate(request)) {
                     is OperationResult.Success -> {
                         val value = result.value
-                        // Provider/diagnostic metadata is transport data, never
-                        // part of the assistant's visible answer.
+                        val clean = AiTextSanitizer.sanitize(value.text)
+                        if (clean.isBlank()) {
+                            lastFailure = OperationResult.Failure(
+                                OperationError.PROVIDER,
+                                "Empty sanitized AI response"
+                            )
+                            continue
+                        }
                         return OperationResult.Success(
-                            value.copy(text = cleanAssistantText(value.text))
+                            value.copy(text = clean)
                         )
                     }
                     is OperationResult.Failure -> lastFailure = result
@@ -55,25 +72,5 @@ class AiRouter(
             OperationError.PROVIDER,
             "No AI provider available"
         )
-    }
-
-    private fun cleanAssistantText(raw: String?): String {
-        val lines = raw.orEmpty()
-            .trim()
-            .lines()
-            .filterNot { line ->
-                val normalized = line.trim().lowercase()
-                normalized.startsWith("system:") ||
-                    normalized.startsWith("user:") ||
-                    normalized.startsWith("assistant:") ||
-                    normalized.startsWith("provider ·") ||
-                    normalized.startsWith("provider:") ||
-                    normalized.startsWith("http 503") ||
-                    normalized.startsWith("http 429") ||
-                    normalized.startsWith("ai_providers_unavailable") ||
-                    normalized.startsWith("modo local activo") ||
-                    normalized.startsWith("respaldo local activado")
-            }
-        return lines.joinToString("\n").trim()
     }
 }
