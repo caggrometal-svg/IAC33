@@ -1,3 +1,4 @@
+// OTA bootstrap: trust is derived from the Android signing key.
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
