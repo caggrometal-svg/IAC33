@@ -4,7 +4,9 @@ import android.content.Context
 import cl.iac33.app.BuildConfig
 import org.json.JSONObject
 import java.net.HttpURLConnection
+import java.io.File
 import java.net.URL
+import java.util.UUID
 
 /** Executes a remotely requested OTA after strict manifest/artifact verification. */
 class OtaCommandExecutor(private val context: Context) {
