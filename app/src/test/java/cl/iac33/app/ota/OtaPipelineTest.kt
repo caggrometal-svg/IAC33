@@ -27,7 +27,7 @@ class OtaPipelineTest {
             artifactSize = bytes.size.toLong(),
             algorithm = "SHA256withECDSA",
             signatureBase64 = Base64.getEncoder().encodeToString(signature),
-            keyId = "iac33-ota-v1",
+            keyId = OTA_KEY_ID,
             rollbackRef = "release-1"
         )
         return manifest to Base64.getEncoder().encodeToString(keyPair.public.encoded)
