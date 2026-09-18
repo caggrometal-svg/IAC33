@@ -43,26 +43,135 @@ jobs:
           test -n "$KEY_ALIAS"
           test -n "$KEY_PASSWORD"
           printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE_PATH"
-          keytool -list -keystore "$KEYSTORE_PATH" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
-          keytool -importkeystore -noprompt             -srckeystore "$KEYSTORE_PATH" -srcstoretype JKS             -srcstorepass "$KEYSTORE_PASSWORD" -srcalias "$KEY_ALIAS" -srckeypass "$KEY_PASSWORD"             -destkeystore "$RUNNER_TEMP/iac33-ota-signer.p12" -deststoretype PKCS12             -deststorepass "$KEY_PASSWORD" -destkeypass "$KEY_PASSWORD" >/dev/null 2>&1
-          openssl pkcs12 -in "$RUNNER_TEMP/iac33-ota-signer.p12" -nocerts -nodes             -passin pass:"$KEY_PASSWORD" -out "$RUNNER_TEMP/bridge-key-build.pem" >/dev/null 2>&1
-          openssl pkey -in "$RUNNER_TEMP/bridge-key-build.pem" -text -noout >/dev/null
-          IAC33_OTA_PUBLIC_KEY_B64="$(openssl pkey -in "$RUNNER_TEMP/bridge-key-build.pem" -pubout -outform DER | base64 -w0)"
-          test -n "$IAC33_OTA_PUBLIC_KEY_B64"
-          if openssl pkey -in "$RUNNER_TEMP/bridge-key-build.pem" -text -noout 2>/dev/null | grep -q 'ASN1 OID: prime256v1'; then
-            echo "SHA256withECDSA" > "$RUNNER_TEMP/ota-algorithm"
-          else
-            echo "SHA256withRSA" > "$RUNNER_TEMP/ota-algorithm"
-          fi
-          gradle assembleRelease --no-daemon --stacktrace --console=plain             -PIAC33_OTA_PUBLIC_KEY_B64="$IAC33_OTA_PUBLIC_KEY_B64"             -Pandroid.injected.signing.store.file="$KEYSTORE_PATH"             -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD"             -Pandroid.injected.signing.key.alias="$KEY_ALIAS"             -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+          keytool -list -keystore "$KEYSTORE_PATH" -storepass "$KEYSTORE_PASSWORD" >/dev/null
+          OTA_PUBLIC_KEY_B64="$(sed -n 's/^IAC33_OTA_PUBLIC_KEY_B64=//p' gradle.properties | head -n1)"
+          test -n "$OTA_PUBLIC_KEY_B64"
+          printf '%s' "$OTA_PUBLIC_KEY_B64" | base64 --decode > "$RUNNER_TEMP/iac33-ota-public-key.der"
+          openssl pkey -pubin -inform DER -in "$RUNNER_TEMP/iac33-ota-public-key.der" -text -noout >/dev/null
+          gradle assembleRelease --no-daemon --stacktrace --console=plain \
+            -PIAC33_OTA_PUBLIC_KEY_B64="$OTA_PUBLIC_KEY_B64" \
+            -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
+            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
           test -s app/build/outputs/apk/release/app-release.apk
 
-      - name: Sign OTA artifact
+      - name: Normalize and sign OTA artifact
+        env:
+          BRIDGE_KEY_B64: ${{ secrets.BRIDGE_ECDSA_PRIVATE_KEY_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.IAC33_ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.IAC33_ANDROID_KEY_PASSWORD }}
         run: |
           set -eu
-          test -s "$RUNNER_TEMP/bridge-key-build.pem"
-          openssl pkey -in "$RUNNER_TEMP/bridge-key-build.pem" -text -noout >/dev/null
-          openssl dgst -sha256 -sign "$RUNNER_TEMP/bridge-key-build.pem" app/build/outputs/apk/release/app-release.apk > "$RUNNER_TEMP/ota-signature.bin"
+          test -n "$BRIDGE_KEY_B64"
+          test -n "$KEYSTORE_PASSWORD"
+          test -n "$KEY_PASSWORD"
+
+          RAW="$RUNNER_TEMP/bridge-key.raw"
+          PEM="$RUNNER_TEMP/bridge-key.pem"
+          P12="$RUNNER_TEMP/bridge-key-export.p12"
+          PUB="$RUNNER_TEMP/bridge-key-pub.der"
+          EXPECTED_PUB="$RUNNER_TEMP/iac33-ota-public-key.der"
+          EXPORT_PASSWORD="$KEY_PASSWORD"
+
+          printf '%s' "$BRIDGE_KEY_B64" | base64 --decode > "$RAW"
+          echo "Bridge key container: $(file -b "$RAW")"
+          rm -f "$PEM" "$P12" "$PUB"
+
+          if [ "$(file -b "$RAW")" = "Java KeyStore" ]; then
+            FOUND=0
+            for STORE_PASS in "$KEYSTORE_PASSWORD" "$KEY_PASSWORD" changeit; do
+              LIST="$RUNNER_TEMP/bridge-key-list.txt"
+              if ! keytool -list -keystore "$RAW" -storetype JKS -storepass "$STORE_PASS" > "$LIST" 2>/dev/null; then
+                continue
+              fi
+
+              while IFS= read -r ALIAS; do
+                [ -n "$ALIAS" ] || continue
+
+                for SRC_KEY_PASS in "$KEY_PASSWORD" "$KEYSTORE_PASSWORD" changeit; do
+                  rm -f "$P12" "$PEM" "$PUB"
+
+                  if ! keytool -importkeystore -noprompt \
+                    -srckeystore "$RAW" -srcstoretype JKS \
+                    -srcstorepass "$STORE_PASS" -srcalias "$ALIAS" -srckeypass "$SRC_KEY_PASS" \
+                    -destkeystore "$P12" -deststoretype PKCS12 \
+                    -deststorepass "$EXPORT_PASSWORD" -destkeypass "$EXPORT_PASSWORD" \
+                    >/dev/null 2>&1; then
+                    continue
+                  fi
+
+                  if ! openssl pkcs12 -in "$P12" -nocerts -nodes \
+                    -passin pass:"$EXPORT_PASSWORD" -out "$PEM" >/dev/null 2>&1; then
+                    continue
+                  fi
+
+                  if ! openssl pkey -in "$PEM" -pubout -outform DER -out "$PUB" >/dev/null 2>&1; then
+                    continue
+                  fi
+
+                  KEY_CURVE="$(openssl pkey -in "$PEM" -text -noout 2>/dev/null | grep -E 'ASN1 OID:|NIST CURVE:' | tail -n1 || true)"
+                  case "$KEY_CURVE" in
+                    *prime256v1*|*"P-256"*) ;;
+                    *) continue ;;
+                  esac
+
+                  if cmp -s "$PUB" "$EXPECTED_PUB"; then
+                    FOUND=1
+                    echo "Recovered expected OTA ECDSA P-256 key from JKS alias: $ALIAS"
+                    break
+                  fi
+                done
+
+                [ "$FOUND" -eq 1 ] && break
+              done < <(awk -F, '/PrivateKeyEntry/ {gsub(/^ +| +$/, "", $1); print $1}' "$LIST")
+
+              [ "$FOUND" -eq 1 ] && break
+            done
+
+            if [ "$FOUND" -ne 1 ]; then
+              echo "JKS does not contain an EC P-256 private key matching IAC33_OTA_PUBLIC_KEY_B64" >&2
+              echo "BRIDGE_ECDSA_PRIVATE_KEY_B64 must contain the dedicated OTA ECDSA key or a JKS containing that exact P-256 key." >&2
+              exit 1
+            fi
+          else
+            if openssl pkey -in "$RAW" -out "$PEM" 2>/dev/null; then
+              :
+            elif openssl pkey -inform DER -in "$RAW" -out "$PEM" 2>/dev/null; then
+              :
+            elif openssl ec -inform DER -in "$RAW" -out "$PEM" 2>/dev/null; then
+              :
+            elif openssl pkcs8 -inform DER -in "$RAW" -nocrypt -out "$PEM" 2>/dev/null; then
+              :
+            else
+              FOUND=0
+              for PASS in "$KEY_PASSWORD" "$KEYSTORE_PASSWORD" ""; do
+                rm -f "$PEM"
+                if openssl pkcs12 -in "$RAW" -nocerts -nodes -passin pass:"$PASS" -out "$PEM" 2>/dev/null; then
+                  FOUND=1
+                  break
+                fi
+              done
+              [ "$FOUND" -eq 1 ] || { echo "Unable to normalize Bridge ECDSA private key" >&2; exit 1; }
+            fi
+          fi
+
+          test -s "$PEM"
+          openssl pkey -in "$PEM" -text -noout >/dev/null
+
+          KEY_CURVE="$(openssl pkey -in "$PEM" -text -noout 2>/dev/null | grep -E 'ASN1 OID:|NIST CURVE:' | tail -n1 || true)"
+          case "$KEY_CURVE" in
+            *prime256v1*|*"P-256"*) ;;
+            *) echo "Bridge signing key is not EC P-256" >&2; exit 1 ;;
+          esac
+
+          openssl pkey -in "$PEM" -pubout -outform DER -out "$PUB" >/dev/null
+          cmp -s "$PUB" "$EXPECTED_PUB" || {
+            echo "Bridge public key does not match the APK OTA trust anchor" >&2
+            exit 1
+          }
+
+          openssl dgst -sha256 -sign "$PEM" app/build/outputs/apk/release/app-release.apk > "$RUNNER_TEMP/ota-signature.bin"
           base64 -w0 "$RUNNER_TEMP/ota-signature.bin" > "$RUNNER_TEMP/ota-signature.b64"
           sha256sum app/build/outputs/apk/release/app-release.apk | cut -d' ' -f1 > "$RUNNER_TEMP/ota-sha256"
           stat -c '%s' app/build/outputs/apk/release/app-release.apk > "$RUNNER_TEMP/ota-size"
