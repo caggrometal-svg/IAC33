@@ -52,12 +52,15 @@ test('AI endpoint returns a provider response through the backend route', async 
   const originalOrder = process.env.AI_PROVIDER_ORDER;
   try {
     process.env.AI_PROVIDER_ORDER = 'animica';
-    globalThis.fetch = async () => new Response(
-      JSON.stringify({ choices: [{ message: { content: 'pong' } }] }),
-      { status: 200, headers: { 'content-type': 'application/json' } },
-    );
     await withServer(async (baseUrl) => {
-      const response = await fetch(baseUrl + '/v1/ai/generate', {
+      globalThis.fetch = async (url, options) => {
+        if (String(url).startsWith(baseUrl)) return originalFetch(url, options);
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: 'pong' } }] }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      };
+      const response = await originalFetch(baseUrl + '/v1/ai/generate', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
