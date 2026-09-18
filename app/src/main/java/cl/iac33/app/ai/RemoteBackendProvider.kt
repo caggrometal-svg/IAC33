@@ -4,12 +4,14 @@ import cl.iac33.app.core.AiRequest
 import cl.iac33.app.core.AiResult
 import cl.iac33.app.core.OperationError
 import cl.iac33.app.core.OperationResult
+import cl.iac33.app.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URI
 
 class RemoteBackendProvider(
     private val baseUrl: String
@@ -24,6 +26,13 @@ class RemoteBackendProvider(
         val started = System.currentTimeMillis()
         var connection: HttpURLConnection? = null
         try {
+            val parsed = URI(baseUrl.trimEnd('/'))
+            val secure = parsed.scheme.equals("https", ignoreCase = true)
+            val localDebug = BuildConfig.DEBUG && parsed.scheme.equals("http", ignoreCase = true) &&
+                (parsed.host.equals("localhost", true) || parsed.host == "127.0.0.1" || parsed.host == "10.0.2.2")
+            if (!secure && !localDebug) {
+                return@withContext OperationResult.Failure(OperationError.NETWORK, "Backend URL must use HTTPS")
+            }
             connection = (URL(baseUrl.trimEnd('/') + "/v1/ai/generate").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = request.timeoutMs.toInt().coerceAtMost(45_000)
