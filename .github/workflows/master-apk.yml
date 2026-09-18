@@ -3,6 +3,17 @@ name: IAC33 Master APK
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - 'gradle/**'
+      - '*.gradle'
+      - '*.gradle.kts'
+      - 'gradle.properties'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - '.github/workflows/master-apk.yml'
     tags:
       - 'v*'
 

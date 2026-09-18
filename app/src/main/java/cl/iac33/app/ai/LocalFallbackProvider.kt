@@ -36,7 +36,7 @@ class LocalFallbackProvider : AiProvider {
                 "IAC33 está diseñado con funcionamiento local de respaldo, conexión al backend cuando hay red, memoria local y módulos independientes para GPS, sismicidad, multimedia y control."
 
             else ->
-                "Modo local activo. No hay un modelo remoto disponible en este momento, pero puedo orientarte sobre IA, Sismos, GPS, Multimedia, Red, Control y Configuración."
+                "No puedo responder esa consulta sin un modelo remoto disponible."
         }
 
         return OperationResult.Success(

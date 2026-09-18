@@ -63,7 +63,6 @@ import cl.iac33.app.ai.AiEngineImpl
 import cl.iac33.app.core.AiMessage
 import cl.iac33.app.core.AiRequest
 import cl.iac33.app.core.OperationResult
-import cl.iac33.app.core.OperationError
 import cl.iac33.app.core.connectivity.ConnectivityMonitor
 import cl.iac33.app.core.connectivity.ConnectivityStatus
 import cl.iac33.app.core.location.LocationReader
@@ -229,6 +228,27 @@ class MainActivity : ComponentActivity() {
 private const val AI_REQUEST_TIMEOUT_MS = 10_000L
 private const val AI_UI_TIMEOUT_MS = 12_000L
 
+private fun cleanVisibleAiText(raw: String?): String {
+    return raw.orEmpty()
+        .trim()
+        .lines()
+        .filterNot { line ->
+            val normalized = line.trim().lowercase()
+            normalized.startsWith("system:") ||
+                normalized.startsWith("user:") ||
+                normalized.startsWith("assistant:") ||
+                normalized.startsWith("provider ·") ||
+                normalized.startsWith("provider:") ||
+                normalized.startsWith("http 503") ||
+                normalized.startsWith("http 429") ||
+                normalized.startsWith("ai_providers_unavailable") ||
+                normalized.startsWith("modo local activo") ||
+                normalized.startsWith("respaldo local activado")
+        }
+        .joinToString("\n")
+        .trim()
+}
+
 @Composable
 private fun AiPanel(
     lines: List<ChatLine>,
@@ -259,7 +279,7 @@ private fun AiPanel(
                 val messages = listOf(
                     AiMessage(
                         "system",
-                        "Responde siempre en español. Sé claro, directo, natural y útil. Puedes explicar las funciones reales de IAC33. Nunca presentes una estimación sísmica como predicción exacta."
+                        "Responde únicamente a lo que pregunto. Responde en español salvo que pida otro idioma. Sé directo, claro y natural. No repitas ni parafrasees mi pregunta. No agregues saludos, despedidas, relleno ni encabezados innecesarios. No muestres SYSTEM, USER, ASSISTANT, proveedores, códigos HTTP, diagnósticos, historial crudo ni mensajes internos. Nunca presentes una estimación sísmica como predicción exacta."
                     )
                 ) + updated.takeLast(16).map { AiMessage(it.role, it.text.take(ChatStore.MAX_MESSAGE_CHARS)) }
 
@@ -276,29 +296,21 @@ private fun AiPanel(
                 when (result) {
                     is OperationResult.Success -> {
                         val value = result.value
-                        val modelLabel = listOfNotNull(value.provider, value.model)
-                            .filter { it.isNotBlank() }
-                            .joinToString(" · ")
-                        val body = value.text.orEmpty().ifBlank { "Respuesta vacía." }
-                        val answer = if (modelLabel.isBlank()) body else modelLabel + "\n" + body
-                        onLinesChange(updated + ChatLine("assistant", answer))
+                        val answer = cleanVisibleAiText(value.text)
+                        if (answer.isNotBlank()) {
+                            onLinesChange(updated + ChatLine("assistant", answer))
+                        }
                     }
                     is OperationResult.Failure -> {
-                        val detail = when (result.error) {
-                            OperationError.RATE_LIMIT -> "El proveedor remoto está limitado."
-                            OperationError.NETWORK -> "No hay conexión con el backend."
-                            OperationError.TIMEOUT -> "El proveedor tardó demasiado."
-                            else -> result.message
-                        }
-                        onLinesChange(updated + ChatLine("assistant", "IA en modo de respaldo: " + detail))
+                        onLinesChange(updated + ChatLine("assistant", "No se pudo obtener una respuesta."))
                     }
                 }
             } catch (error: TimeoutCancellationException) {
-                onLinesChange(updated + ChatLine("assistant", "IA: tiempo de espera agotado (12 s)."))
+                onLinesChange(updated + ChatLine("assistant", "No se pudo obtener una respuesta."))
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                onLinesChange(updated + ChatLine("assistant", "IA: " + (error.message ?: "error interno")))
+                onLinesChange(updated + ChatLine("assistant", "No se pudo obtener una respuesta."))
             } finally {
                 busy = false
             }
