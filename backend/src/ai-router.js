@@ -1,7 +1,7 @@
 const providers = {
-  horde: { key: null, async call(messages, timeoutMs) { return callAiHorde(messages, timeoutMs); } },
-  pollinations: { key: null, async call(messages, timeoutMs) { return callPollinations(messages, timeoutMs); } },
-  kilo: { key: null, async call(messages, timeoutMs) { return callKilo(messages, timeoutMs); } },
+  horde: { key: null, async call(messages, timeoutMs, attempt) { return callAiHorde(messages, timeoutMs, attempt); } },
+  pollinations: { key: null, async call(messages, timeoutMs, attempt) { return callPollinations(messages, timeoutMs, attempt); } },
+  kilo: { key: null, async call(messages, timeoutMs, attempt) { return callKilo(messages, timeoutMs, attempt); } },
   openrouter: { key: 'OPENROUTER_API_KEY', async call(messages, timeoutMs) { return callOpenAiCompatible('https://openrouter.ai/api/v1/chat/completions', process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_MODEL || 'openrouter/free', messages, timeoutMs); } },
   groq: { key: 'GROQ_API_KEY', async call(messages, timeoutMs) { return callOpenAiCompatible('https://api.groq.com/openai/v1/chat/completions', process.env.GROQ_API_KEY, process.env.GROQ_MODEL || 'openai/gpt-oss-120b', messages, timeoutMs); } },
   gemini: { key: 'GEMINI_API_KEY', async call(messages, timeoutMs) { const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite'; return callGemini(messages, timeoutMs, model); } },
@@ -57,12 +57,13 @@ async function callCloudflare(messages, timeoutMs, account, model) {
     const text = json?.result?.response || json?.result?.text || ''; if (!text) throw providerError(502, 'Cloudflare returned empty response'); return { text, model };
   } finally { clearTimeout(timer); }
 }
-async function callKilo(messages, timeoutMs) {
+async function callKilo(messages, timeoutMs, attempt = 1) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const model = process.env.KILO_MODEL || 'kilo-auto/free';
   try {
-    const endpoint = parseList(process.env.KILO_ENDPOINTS, 'https://api.kilo.ai/api/gateway/chat/completions')[0]; 
+    const endpoints = parseList(process.env.KILO_ENDPOINTS, 'https://api.kilo.ai/api/gateway/chat/completions');
+    const endpoint = endpoints[(Math.max(attempt, 1) - 1) % endpoints.length];
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -76,12 +77,13 @@ async function callKilo(messages, timeoutMs) {
     return { text, model: json?.model || model };
   } finally { clearTimeout(timer); }
 }
-async function callPollinations(messages, timeoutMs) {
+async function callPollinations(messages, timeoutMs, attempt = 1) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const model = process.env.POLLINATIONS_MODEL || 'openai';
   try {
-    const endpoint = parseList(process.env.POLLINATIONS_ENDPOINTS, 'https://text.pollinations.ai/openai')[0];
+    const endpoints = parseList(process.env.POLLINATIONS_ENDPOINTS, 'https://text.pollinations.ai/openai');
+    const endpoint = endpoints[(Math.max(attempt, 1) - 1) % endpoints.length];
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -95,7 +97,7 @@ async function callPollinations(messages, timeoutMs) {
     return { text, model };
   } finally { clearTimeout(timer); }
 }
-async function callAiHorde(messages, timeoutMs) {
+async function callAiHorde(messages, timeoutMs, attempt = 1) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const apiKey = process.env.AI_HORDE_API_KEY || '0000000000';
@@ -111,7 +113,8 @@ async function callAiHorde(messages, timeoutMs) {
       }
     };
     if (model) payload.models = [model];
-    const endpoint = parseList(process.env.AI_HORDE_ENDPOINTS, 'https://aihorde.net').find(Boolean);
+    const endpoints = parseList(process.env.AI_HORDE_ENDPOINTS, 'https://aihorde.net');
+    const endpoint = endpoints[(Math.max(attempt, 1) - 1) % endpoints.length];
     const response = await fetch(endpoint.replace(/\/$/, '') + '/api/v2/generate/text/async', {
       method: 'POST',
       headers: { apikey: apiKey, 'Client-Agent': 'IAC33:2.0', 'content-type': 'application/json' },
@@ -186,7 +189,7 @@ export async function generateWithFreePool({ messages, timeoutMs = 18000 }) {
         remainingMs
       );
       try {
-        return await provider.call(messages, attemptTimeoutMs);
+        return await provider.call(messages, attemptTimeoutMs, attempt);
       } catch (error) {
         lastError = error;
         if (attempt >= maxAttempts || !isRetryable(error)) break;
