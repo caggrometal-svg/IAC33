@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: iac33-android-connected-e2e.yml-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   android-connected:
     runs-on: ubuntu-latest
