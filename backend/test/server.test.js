@@ -45,3 +45,35 @@ test('protected control endpoints reject missing authorization', async () => {
     assert.equal(response.status, 401);
   });
 });
+
+
+test('AI endpoint returns a provider response through the backend route', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalOrder = process.env.AI_PROVIDER_ORDER;
+  try {
+    process.env.AI_PROVIDER_ORDER = 'animica';
+    globalThis.fetch = async () => new Response(
+      JSON.stringify({ choices: [{ message: { content: 'pong' } }] }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+    await withServer(async (baseUrl) => {
+      const response = await fetch(baseUrl + '/v1/ai/generate', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          messages: [{ role: 'user', content: 'ping' }],
+          timeoutMs: 1000,
+        }),
+      });
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      assert.equal(body.ok, true);
+      assert.equal(body.provider, 'animica');
+      assert.equal(body.text, 'pong');
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalOrder === undefined) delete process.env.AI_PROVIDER_ORDER;
+    else process.env.AI_PROVIDER_ORDER = originalOrder;
+  }
+});
