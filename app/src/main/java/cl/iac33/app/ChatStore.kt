@@ -16,7 +16,8 @@ class ChatStore(context: Context) {
                 val role = item.optString("role")
                 val text = item.optString("text")
                 if ((role == "user" || role == "assistant") && text.isNotBlank()) {
-                    add(ChatLine(role, text.take(MAX_MESSAGE_CHARS)))
+                    val source = item.optString("source").ifBlank { "unknown" }
+                    add(ChatLine(role, text.take(MAX_MESSAGE_CHARS), source))
                 }
             }
         }.takeLast(MAX_LINES)
@@ -26,7 +27,12 @@ class ChatStore(context: Context) {
         val array = JSONArray()
         lines.takeLast(MAX_LINES).forEach { line ->
             if (line.role != "user" && line.role != "assistant") return@forEach
-            array.put(JSONObject().put("role", line.role).put("text", line.text.take(MAX_MESSAGE_CHARS)))
+            array.put(
+                JSONObject()
+                    .put("role", line.role)
+                    .put("text", line.text.take(MAX_MESSAGE_CHARS))
+                    .put("source", line.source)
+            )
         }
         prefs.edit().putString(KEY_LINES, array.toString()).apply()
     }
