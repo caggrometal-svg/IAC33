@@ -128,7 +128,8 @@ async function readJsonBounded(response) {
   try {
     return text ? JSON.parse(text) : {};
   } catch {
-    throw providerError(502, 'Provider returned invalid JSON');
+    // Preserve the HTTP status so 429/5xx responses remain eligible for failover.
+    return {};
   }
 }
 
