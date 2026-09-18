@@ -9,6 +9,11 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+
+concurrency:
+  group: iac33-ota-release
+  cancel-in-progress: true
 
 jobs:
   ota-release:
@@ -211,11 +216,13 @@ jobs:
 
       - name: Queue OTA command to IAC33 backend
         env:
-          CONTROL_TOKEN: ${{ secrets.CONTROL_TOKEN }}
           BACKEND_URL: https://iac33-backend.onrender.com
+          OIDC_AUDIENCE: iac33-backend
         run: |
           set -eu
-          test -n "$CONTROL_TOKEN"
+          test -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+          OIDC_TOKEN="$(curl --fail-with-body --silent --show-error             -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$OIDC_AUDIENCE" | jq -er '.value')"
+          test -n "$OIDC_TOKEN"
           VERSION_NAME="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n1)"
           TAG="ota-$VERSION_NAME-$GITHUB_RUN_NUMBER"
           ARTIFACT_NAME="iac33-$TAG.apk"
@@ -250,4 +257,4 @@ jobs:
                 }
               }
             }' > ota-command.json
-          curl --fail-with-body --silent --show-error             -H "Authorization: Bearer $CONTROL_TOKEN"             -H "Content-Type: application/json"             --data-binary @ota-command.json             "$BACKEND_URL/v1/gpt/commands"
+          curl --fail-with-body --silent --show-error             -H "Authorization: Bearer $OIDC_TOKEN"             -H "Content-Type: application/json"             --data-binary @ota-command.json             "$BACKEND_URL/v1/gpt/commands"
