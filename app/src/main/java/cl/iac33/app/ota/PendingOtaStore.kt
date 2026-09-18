@@ -10,17 +10,21 @@ class PendingOtaStore(context: Context) {
         val commandId: String,
         val idempotencyKey: String,
         val releaseId: String,
-        val appVersion: String
+        val appVersion: String,
+        val expiresAtMs: Long
     )
 
     @Synchronized
-    fun save(commandId: String, idempotencyKey: String, releaseId: String, appVersion: String): Boolean =
-        prefs.edit()
-            .putString("commandId", commandId)
-            .putString("idempotencyKey", idempotencyKey)
-            .putString("releaseId", releaseId)
-            .putString("appVersion", appVersion)
-            .commit()
+    fun save(commandId: String, idempotencyKey: String, releaseId: String, appVersion: String, expiresAtMs: Long): Boolean =
+        commandId.isNotBlank() && idempotencyKey.isNotBlank() && releaseId.isNotBlank() && appVersion.isNotBlank() &&
+            expiresAtMs > System.currentTimeMillis() &&
+            prefs.edit()
+                .putString("commandId", commandId)
+                .putString("idempotencyKey", idempotencyKey)
+                .putString("releaseId", releaseId)
+                .putString("appVersion", appVersion)
+                .putLong("expiresAtMs", expiresAtMs)
+                .commit()
 
     @Synchronized
     fun get(): Pending? {
@@ -28,7 +32,12 @@ class PendingOtaStore(context: Context) {
         val idempotencyKey = prefs.getString("idempotencyKey", null) ?: return null
         val releaseId = prefs.getString("releaseId", null) ?: return null
         val appVersion = prefs.getString("appVersion", null) ?: return null
-        return Pending(commandId, idempotencyKey, releaseId, appVersion)
+        val expiresAtMs = prefs.getLong("expiresAtMs", 0L)
+        if (expiresAtMs <= System.currentTimeMillis()) {
+            clear()
+            return null
+        }
+        return Pending(commandId, idempotencyKey, releaseId, appVersion, expiresAtMs)
     }
 
     @Synchronized
