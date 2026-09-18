@@ -7,6 +7,17 @@ const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
 const DEVICE_ID_PATTERN = /^[A-Za-z0-9._:-]{16,128}$/;
 const ALLOWED_TYPES = new Set(['sync', 'update', 'device.action', 'OTA_INSTALL']);
 
+function compareVersions(left, right) {
+  const a = left.split('.').map(Number);
+  const b = right.split('.').map(Number);
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    const av = a[i] ?? 0;
+    const bv = b[i] ?? 0;
+    if (av !== bv) return av > bv ? 1 : -1;
+  }
+  return 0;
+}
+
 function validateGptCommand(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
   if (typeof input.id !== 'string' || !ID_PATTERN.test(input.id)) return false;
@@ -30,6 +41,7 @@ function validateOtaPayload(payload) {
   if (typeof manifest.releaseId !== 'string' || !ID_PATTERN.test(manifest.releaseId)) return false;
   if (typeof manifest.appVersion !== 'string' || !/^\d+(\.\d+){2,3}$/.test(manifest.appVersion)) return false;
   if (typeof manifest.minimumSupportedVersion !== 'string' || !/^\d+(\.\d+){2,3}$/.test(manifest.minimumSupportedVersion)) return false;
+  if (compareVersions(manifest.appVersion, manifest.minimumSupportedVersion) < 0) return false;
   if (typeof manifest.createdAt !== 'string' || !Number.isFinite(Date.parse(manifest.createdAt))) return false;
   if (typeof manifest.artifactRef !== 'string') return false;
   let artifactUrl;
@@ -40,7 +52,7 @@ function validateOtaPayload(payload) {
   if (typeof manifest.artifactSha256 !== 'string' || !/^[0-9a-fA-F]{64}$/.test(manifest.artifactSha256)) return false;
   if (manifest.algorithm !== 'SHA256withECDSA') return false;
   if (manifest.keyId !== 'iac33-bridge-ecdsa-v1') return false;
-  if (typeof manifest.signatureBase64 !== 'string' || !/^[A-Za-z0-9+/=_-]+$/.test(manifest.signatureBase64)) return false;
+  if (typeof manifest.signatureBase64 !== 'string' || manifest.signatureBase64.length > 512 || !/^[A-Za-z0-9+/=_-]+$/.test(manifest.signatureBase64)) return false;
   if (typeof manifest.rollbackRef !== 'string' || !manifest.rollbackRef.trim()) return false;
   return true;
 }
