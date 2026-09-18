@@ -3,21 +3,53 @@ package cl.iac33.app
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.*
-import androidx.compose.ui.Alignment
-import androidx.compose.runtime.*
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.graphics.Color
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -33,15 +65,22 @@ import cl.iac33.app.core.location.LocationReader
 import cl.iac33.app.core.location.LocationSnapshot
 import cl.iac33.app.seismic.SeismicClient
 import cl.iac33.app.seismic.SeismicEvent
+import cl.iac33.app.seismic.SeismicEstimate
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.Locale
 import java.util.UUID
 
 data class ChatLine(val role: String, val text: String)
 
-private val sections = listOf("IA", "Sismos", "C33", "Red", "GPS", "Control")
-private val sectionGlyphs = listOf("AI", "EQ", "C33", "NET", "GPS", "CTL")
+private val sections = listOf("IA", "Sismos", "C33", "Red", "GPS", "Multimedia", "Control", "Config")
+private val sectionGlyphs = listOf("AI", "EQ", "C33", "NET", "GPS", "MED", "CTL", "CFG")
 
-@OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
     private val locationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
@@ -53,58 +92,59 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            val iac33DarkColors = darkColorScheme(
-                primary = Color(0xFF38BDF8),
-                onPrimary = Color(0xFF020617),
-                primaryContainer = Color(0xFF0C4A6E),
-                onPrimaryContainer = Color(0xFFE0F2FE),
-                secondary = Color(0xFF818CF8),
-                onSecondary = Color(0xFF0F172A),
-                secondaryContainer = Color(0xFF312E81),
-                onSecondaryContainer = Color(0xFFE0E7FF),
-                tertiary = Color(0xFF2DD4BF),
-                onTertiary = Color(0xFF042F2E),
-                tertiaryContainer = Color(0xFF134E4A),
-                onTertiaryContainer = Color(0xFFCCFBF1),
-                background = Color(0xFF030712),
-                onBackground = Color(0xFFF8FAFC),
-                surface = Color(0xFF090D16),
-                onSurface = Color(0xFFF8FAFC),
-                surfaceVariant = Color(0xFF111827),
-                onSurfaceVariant = Color(0xFFCBD5E1),
-                outline = Color(0xFF334155)
-            )
-            MaterialTheme(colorScheme = iac33DarkColors) {
-                var selected by rememberSaveable { mutableIntStateOf(0) }
-                var connectivityStatus by remember { mutableStateOf(ConnectivityStatus.OFFLINE) }
-                var location by remember { mutableStateOf<LocationSnapshot?>(null) }
-                val connectivityMonitor = remember { ConnectivityMonitor(this@MainActivity) }
-                val locationReader = remember { LocationReader(this@MainActivity) }
-                val lifecycleOwner = LocalLifecycleOwner.current
-                val locationScope = rememberCoroutineScope()
-                val chatStore = remember { ChatStore(this@MainActivity) }
-                var chatLines by remember { mutableStateOf(chatStore.load().ifEmpty { listOf(ChatLine("assistant", "IAC33 listo. Puedes escribir una consulta.")) }) }
-
-                DisposableEffect(Unit) {
-                    connectivityMonitor.start { status -> connectivityStatus = status }
-                    onDispose { connectivityMonitor.stop() }
-                }
-                DisposableEffect(lifecycleOwner) {
-                    val observer = LifecycleEventObserver { _, event ->
-                        if (event == Lifecycle.Event.ON_RESUME) locationScope.launch { location = locationReader.readCurrentOrLastKnown() }
+            val colors = MaterialTheme.colorScheme
+            val settingsStore = remember { SettingsStore(this@MainActivity) }
+            var settings by remember { mutableStateOf(settingsStore.load()) }
+            var selected by rememberSaveable { mutableIntStateOf(0) }
+            var connectivityStatus by remember { mutableStateOf(ConnectivityStatus.OFFLINE) }
+            var location by remember { mutableStateOf<LocationSnapshot?>(null) }
+            val connectivityMonitor = remember { ConnectivityMonitor(this@MainActivity) }
+            val locationReader = remember { LocationReader(this@MainActivity) }
+            val lifecycleOwner = LocalLifecycleOwner.current
+            val locationScope = rememberCoroutineScope()
+            val chatStore = remember { ChatStore(this@MainActivity) }
+            var chatLines by remember {
+                mutableStateOf(
+                    chatStore.load().ifEmpty {
+                        listOf(ChatLine("assistant", "IAC33 listo. El núcleo local está disponible y puede usar el backend cuando exista conectividad."))
                     }
-                    lifecycleOwner.lifecycle.addObserver(observer)
-                    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-                }
+                )
+            }
 
+            fun saveSettings(next: AppSettings) {
+                settings = next
+                settingsStore.save(next)
+            }
+
+            DisposableEffect(Unit) {
+                connectivityMonitor.start { status -> connectivityStatus = status }
+                onDispose { connectivityMonitor.stop() }
+            }
+
+            DisposableEffect(lifecycleOwner) {
+                val observer = LifecycleEventObserver { _, event ->
+                    if (event == Lifecycle.Event.ON_RESUME) {
+                        locationScope.launch { location = locationReader.readCurrentOrLastKnown() }
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+            }
+
+            MaterialTheme {
                 Scaffold(
                     topBar = {
-                        TopAppBar(title = {
-                            Column {
-                                Text("IAC33")
-                                Text("Núcleo operativo · ${connectivityStatus.name}", style = MaterialTheme.typography.labelSmall)
+                        TopAppBar(
+                            title = {
+                                Column {
+                                    Text("IAC33")
+                                    Text(
+                                        "Núcleo operativo · " + connectivityStatus.name,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
                             }
-                        })
+                        )
                     },
                     bottomBar = {
                         NavigationBar {
@@ -115,140 +155,317 @@ class MainActivity : ComponentActivity() {
                                         selected = index
                                         if (index == 4 && !hasLocationPermission()) requestLocationPermission()
                                     },
-                                    icon = { Text(sectionGlyphs[index], style = MaterialTheme.typography.labelSmall) },
-                                    label = { Text(label) }
+                                    icon = {
+                                        Text(
+                                            sectionGlyphs[index],
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    },
+                                    label = {
+                                        Text(
+                                            label,
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
                                 )
                             }
                         }
                     }
                 ) { padding ->
-                    Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp).imePadding()) {
-                        if (selected == 0) AiPanel(lines = chatLines, onLinesChange = { next -> chatLines = next; chatStore.save(next) })
-                        else if (selected == 1) SeismicPanel()
-                        else if (selected == 4) GpsPanel(location)
-                        else DashboardPanel(sections[selected], connectivityStatus)
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .padding(padding)
+                            .padding(horizontal = 12.dp)
+                            .imePadding()
+                    ) {
+                        when (selected) {
+                            0 -> AiPanel(
+                                lines = chatLines,
+                                settings = settings,
+                                onLinesChange = {
+                                    chatLines = it
+                                    chatStore.save(it)
+                                }
+                            )
+                            1 -> SeismicPanel(settings)
+                            2 -> C33Panel(chatCount = chatLines.size)
+                            3 -> RedPanel(connectivityStatus)
+                            4 -> GpsPanel(location, settings.mapZoom)
+                            5 -> MultimediaPanel()
+                            6 -> ControlPanel(onRestart = { recreate() })
+                            7 -> SettingsPanel(settings, ::saveSettings)
+                        }
                     }
                 }
             }
         }
     }
 
-    private fun hasLocationPermission() =
+    private fun hasLocationPermission(): Boolean =
         ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
             ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
     private fun requestLocationPermission() {
         locationPermissionLauncher.launch(
-            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+            arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            )
         )
     }
 }
 
 @Composable
-private fun AiPanel(lines: List<ChatLine>, onLinesChange: (List<ChatLine>) -> Unit) {
-    val engine = remember { AiEngineImpl() }
+private fun AiPanel(
+    lines: List<ChatLine>,
+    settings: AppSettings,
+    onLinesChange: (List<ChatLine>) -> Unit
+) {
+    val engine = remember(settings.aiLocalFirst) { AiEngineImpl(settings.aiLocalFirst) }
     val scope = rememberCoroutineScope()
     var draft by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+    val quickPrompts = listOf("Estado del sistema", "Analiza Sismos", "¿Cómo funciona GPS?", "Abrir Multimedia")
 
     LaunchedEffect(lines.size) {
         if (lines.isNotEmpty()) listState.animateScrollToItem(lines.lastIndex)
     }
 
-    Column(Modifier.fillMaxSize().navigationBarsPadding()) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Column {
-                Text("Centro IA", style = MaterialTheme.typography.headlineSmall)
-                Text("Conversación con el núcleo IAC33", style = MaterialTheme.typography.bodySmall)
+    fun sendMessage(raw: String) {
+        val prompt = raw.trim()
+        if (prompt.isEmpty() || busy) return
+        val updated = lines + ChatLine("user", prompt)
+        onLinesChange(updated)
+        draft = ""
+        busy = true
+
+        scope.launch {
+            try {
+                val messages = listOf(
+                    AiMessage(
+                        "system",
+                        "Responde siempre en español. Sé claro, directo, natural y útil. Puedes explicar las funciones reales de IAC33. Nunca presentes una estimación sísmica como predicción exacta."
+                    )
+                ) + updated.takeLast(16).map { AiMessage(it.role, it.text.take(ChatStore.MAX_MESSAGE_CHARS)) }
+
+                val result = engine.generate(
+                    AiRequest(
+                        conversationId = UUID.randomUUID().toString(),
+                        messages = messages
+                    )
+                )
+
+                when (result) {
+                    is OperationResult.Success -> {
+                        val value = result.value
+                        val modelLabel = listOfNotNull(value.provider, value.model)
+                            .filter { it.isNotBlank() }
+                            .joinToString(" · ")
+                        val body = value.text.orEmpty().ifBlank { "Respuesta vacía." }
+                        val answer = if (modelLabel.isBlank()) body else modelLabel + "\n" + body
+                        onLinesChange(updated + ChatLine("assistant", answer))
+                    }
+                    is OperationResult.Failure -> {
+                        val detail = when (result.error) {
+                            OperationError.RATE_LIMIT -> "El proveedor remoto está limitado."
+                            OperationError.NETWORK -> "No hay conexión con el backend."
+                            OperationError.TIMEOUT -> "El proveedor tardó demasiado."
+                            else -> result.message
+                        }
+                        onLinesChange(updated + ChatLine("assistant", "IA en modo de respaldo: " + detail))
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                onLinesChange(updated + ChatLine("assistant", "IA: " + (error.message ?: "error interno")))
             }
-            AssistChip(onClick = {}, enabled = false, label = { Text(if (busy) "Procesando" else "Listo") })
+            busy = false
         }
-        Spacer(Modifier.height(8.dp))
-        Card(Modifier.fillMaxWidth().weight(1f), shape = RoundedCornerShape(20.dp)) {
-            LazyColumn(modifier = Modifier.fillMaxSize().padding(12.dp), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    }
+
+    Column(Modifier.fillMaxSize().navigationBarsPadding()) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Centro IA", style = MaterialTheme.typography.headlineSmall)
+                Text(
+                    if (settings.aiLocalFirst) "Local primero · respaldo remoto" else "Remoto primero · respaldo local",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            AssistChip(
+                onClick = {},
+                enabled = false,
+                label = { Text(if (busy) "Procesando" else "Listo") }
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(quickPrompts) { prompt ->
+                AssistChip(onClick = { sendMessage(prompt) }, label = { Text(prompt) })
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Card(Modifier.fillMaxWidth().weight(1f)) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(10.dp),
+                state = listState,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 items(lines) { line ->
-                    Surface(color = if (line.role == "user") MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
-                        Text(text = if (line.role == "user") "TÚ\n${line.text}" else "IAC33\n${line.text}", modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.bodyLarge)
+                    Card(Modifier.fillMaxWidth()) {
+                        Text(
+                            text = if (line.role == "user") "TÚ\n" + line.text else "IAC33\n" + line.text,
+                            modifier = Modifier.padding(10.dp),
+                            style = MaterialTheme.typography.bodyLarge
+                        )
                     }
                 }
             }
         }
-        Spacer(Modifier.height(8.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(value = draft, onValueChange = { if (it.length <= ChatStore.MAX_MESSAGE_CHARS) draft = it }, modifier = Modifier.weight(1f), enabled = !busy, placeholder = { Text("Escribe una consulta a IAC33…") }, shape = RoundedCornerShape(16.dp), singleLine = false, maxLines = 4)
+        Spacer(Modifier.height(6.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = { draft = it.take(ChatStore.MAX_MESSAGE_CHARS) },
+                modifier = Modifier.weight(1f),
+                enabled = !busy,
+                placeholder = { Text("Escribe a IAC33…") },
+                maxLines = 4
+            )
             Button(
-                onClick = {
-                    val prompt = draft.trim()
-                    if (prompt.isEmpty() || busy) return@Button
-                    val updated = lines + ChatLine("user", prompt)
-                    onLinesChange(updated)
-                    draft = ""
-                    busy = true
-                    scope.launch {
-                        try {
-                            val messages = listOf(AiMessage("system", "Responde siempre en español. Sé claro, directo y natural. No cambies de idioma salvo que el usuario lo solicite.")) + updated.takeLast(16).map { AiMessage(it.role, it.text.take(ChatStore.MAX_MESSAGE_CHARS)) }
-                            val result = runCatching { engine.generate(AiRequest(UUID.randomUUID().toString(), messages)) }.getOrElse { throwable -> OperationResult.Failure(OperationError.INTERNAL, throwable.message ?: "Error interno de IA") }
-                            when (result) {
-                                is OperationResult.Success -> onLinesChange(updated + ChatLine("assistant", result.value.text.orEmpty().ifBlank { "Respuesta vacía." }))
-                                is OperationResult.Failure -> onLinesChange(updated + ChatLine("assistant", "Error: ${result.message}"))
-                            }
-                        } finally { busy = false }
-                    }
-                },
+                onClick = { sendMessage(draft) },
                 enabled = !busy && draft.isNotBlank(),
-                modifier = Modifier.height(56.dp),
-                shape = RoundedCornerShape(16.dp)
+                modifier = Modifier.height(56.dp)
             ) { Text(if (busy) "…" else "Enviar") }
         }
     }
 }
 
 @Composable
-private fun DashboardPanel(section: String, connectivityStatus: ConnectivityStatus) {
-    Text(section, style = MaterialTheme.typography.headlineMedium)
-    Spacer(Modifier.height(12.dp))
-    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
-        Column(Modifier.padding(16.dp)) {
-            Text("IAC33 · $section", style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(8.dp))
-            Text("Módulo disponible", style = MaterialTheme.typography.bodyLarge)
-            Spacer(Modifier.height(4.dp))
-            Text("Conectividad: ${connectivityStatus.name}")
-            Spacer(Modifier.height(12.dp))
-            AssistChip(onClick = {}, enabled = false, label = { Text("Núcleo IAC33 activo") })
+private fun C33Panel(chatCount: Int) {
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            Text("Núcleo C33", style = MaterialTheme.typography.headlineSmall)
+            Text("Estado de los componentes locales y del puente.", style = MaterialTheme.typography.bodySmall)
         }
+        items(
+            listOf(
+                "IA" to "Asistente remoto + respaldo local",
+                "Memoria" to "Chat persistido en el dispositivo",
+                "Bridge" to "Cola de comandos y OTA protegida",
+                "Mapas" to "Render OSM embebido sin API key",
+                "Sismicidad" to "CSN + datos geográficos USGS"
+            )
+        ) { item ->
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp)) {
+                    Text(item.first, style = MaterialTheme.typography.titleMedium)
+                    Text(item.second)
+                }
+            }
+        }
+        item { Text("Mensajes persistidos: " + chatCount) }
     }
 }
 
 @Composable
-private fun GpsPanel(location: LocationSnapshot?) {
-    Text("GPS", style = MaterialTheme.typography.headlineSmall)
-    Text("Ubicación del dispositivo", style = MaterialTheme.typography.bodyMedium)
-    Spacer(Modifier.height(12.dp))
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            if (location != null) {
-                Text("Ubicación disponible", style = MaterialTheme.typography.titleLarge)
+private fun RedPanel(connectivityStatus: ConnectivityStatus) {
+    val scope = rememberCoroutineScope()
+    var probe by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+
+    Column(Modifier.fillMaxSize()) {
+        Text("Red", style = MaterialTheme.typography.headlineSmall)
+        Text("Conectividad del dispositivo y backend.", style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(10.dp))
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp)) {
+                Text("Estado", style = MaterialTheme.typography.titleMedium)
+                Text(connectivityStatus.name)
                 Spacer(Modifier.height(8.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Latitud"); Text("%.6f".format(location.latitude)) }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Longitud"); Text("%.6f".format(location.longitude)) }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Precisión"); Text(location.accuracyMeters?.let { "%.1f m".format(it) } ?: "n/d") }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Fuente"); Text(location.provider) }
-            } else {
-                Text("GPS sin posición disponible", style = MaterialTheme.typography.titleLarge)
-                Spacer(Modifier.height(8.dp))
-                Text("Concede el permiso de ubicación y vuelve a abrir esta sección.")
+                Button(
+                    onClick = {
+                        busy = true
+                        scope.launch(Dispatchers.IO) {
+                            val value = runCatching { probeBackend(BuildConfig.IAC33_BACKEND_URL) }
+                                .getOrElse { "Error de red: " + (it.message ?: "desconocido") }
+                            probe = value
+                            busy = false
+                        }
+                    },
+                    enabled = !busy
+                ) { Text(if (busy) "Comprobando…" else "Probar backend") }
+                probe?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun SeismicPanel() {
+private fun GpsPanel(location: LocationSnapshot?, zoom: Int) {
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item {
+            Text("GPS", style = MaterialTheme.typography.headlineSmall)
+            Text("Ubicación del dispositivo y mapa.", style = MaterialTheme.typography.bodyMedium)
+        }
+        if (location == null) {
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("GPS sin posición disponible", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(6.dp))
+                        Text("Concede el permiso de ubicación y vuelve a esta sección.")
+                    }
+                }
+            }
+        } else {
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("Ubicación actual", style = MaterialTheme.typography.titleMedium)
+                        Text(String.format(Locale.US, "Latitud %.6f", location.latitude))
+                        Text(String.format(Locale.US, "Longitud %.6f", location.longitude))
+                        Text("Precisión " + (location.accuracyMeters?.let { String.format(Locale.US, "%.1f m", it) } ?: "n/d"))
+                        Text("Fuente " + location.provider)
+                    }
+                }
+            }
+            item {
+                IAC33Map(
+                    centerLatitude = location.latitude,
+                    centerLongitude = location.longitude,
+                    zoom = zoom,
+                    markers = listOf(
+                        MapMarker(
+                            latitude = location.latitude,
+                            longitude = location.longitude,
+                            title = "Mi ubicación",
+                            subtitle = "Precisión " + (location.accuracyMeters?.let { String.format(Locale.US, "%.1f m", it) } ?: "n/d")
+                        )
+                    )
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SeismicPanel(settings: AppSettings) {
     val scope = rememberCoroutineScope()
     val client = remember { SeismicClient(BuildConfig.IAC33_BACKEND_URL) }
     var events by remember { mutableStateOf<List<SeismicEvent>>(emptyList()) }
+    var mapEvents by remember { mutableStateOf<List<SeismicEvent>>(emptyList()) }
+    var forecast by remember { mutableStateOf<cl.iac33.app.seismic.SeismicForecast?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
 
@@ -256,39 +473,284 @@ private fun SeismicPanel() {
         loading = true
         error = null
         scope.launch {
-            client.latest().onSuccess { snapshot ->
-                events = snapshot.events
-            }.onFailure { failure ->
-                error = failure.message ?: "No se pudo consultar sismicidad"
-            }
+            client.latest()
+                .onSuccess {
+                    events = it.events
+                    mapEvents = it.mapEvents
+                    forecast = it.forecast
+                }
+                .onFailure { error = it.message ?: "No se pudo consultar sismicidad" }
             loading = false
         }
     }
 
     LaunchedEffect(Unit) { refresh() }
 
-    Column(Modifier.fillMaxSize().navigationBarsPadding()) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Sismicidad", style = MaterialTheme.typography.headlineSmall)
-            TextButton(onClick = { refresh() }, enabled = !loading) { Text("Actualizar") }
+    LaunchedEffect(settings.seismicAutoRefresh) {
+        if (!settings.seismicAutoRefresh) return@LaunchedEffect
+        while (isActive) {
+            delay(5 * 60 * 1000L)
+            refresh()
         }
-        Spacer(Modifier.height(8.dp))
-        if (loading && events.isEmpty()) {
-            CircularProgressIndicator()
-        } else if (error != null && events.isEmpty()) {
-            Text("Error: $error")
-        } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(events) { event ->
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(12.dp)) {
-                            Text("M%.1f · %s".format(event.magnitude, event.place), style = MaterialTheme.typography.titleMedium)
-                            Text(event.occurredAtLocal + " · " + event.depthKm + " km")
-                            Text("Fuente: " + event.source)
+    }
+
+    val visible = events.filter { it.magnitude >= settings.seismicMinimumMagnitude }
+    val visibleMap = mapEvents.filter { it.magnitude >= settings.seismicMinimumMagnitude }
+    val markers = visibleMap.mapNotNull {
+        val lat = it.latitude ?: return@mapNotNull null
+        val lon = it.longitude ?: return@mapNotNull null
+        MapMarker(
+            latitude = lat,
+            longitude = lon,
+            title = "M" + String.format(Locale.US, "%.1f", it.magnitude),
+            subtitle = it.place + " · " + String.format(Locale.US, "%.0f km", it.depthKm)
+        )
+    }.take(100)
+
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("Sismicidad", style = MaterialTheme.typography.headlineSmall)
+                    Text("CSN reciente · mapa USGS · análisis histórico", style = MaterialTheme.typography.bodySmall)
+                }
+                OutlinedButton(onClick = { refresh() }, enabled = !loading) { Text("Actualizar") }
+            }
+        }
+
+        item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("Umbral visible: M" + String.format(Locale.US, "%.1f", settings.seismicMinimumMagnitude))
+                    Text("Eventos recientes: " + visible.size)
+                    if (loading && visible.isEmpty()) CircularProgressIndicator()
+                    if (error != null) Text("Aviso: " + error)
+                }
+            }
+        }
+
+        if (markers.isNotEmpty()) {
+            item {
+                IAC33Map(
+                    centerLatitude = markers.map { it.latitude }.average(),
+                    centerLongitude = markers.map { it.longitude }.average(),
+                    zoom = settings.mapZoom,
+                    markers = markers
+                )
+            }
+        }
+
+        val f = forecast
+        if (f != null) {
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("Estimación probabilística", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Historial: " + f.historyYears + " años · muestra M≥" +
+                                String.format(Locale.US, "%.1f", f.completenessMagnitude) +
+                                ": " + f.sampleCount
+                        )
+                        f.bValue?.let {
+                            Text("b-value: " + String.format(Locale.US, "%.2f", it))
                         }
+                        Spacer(Modifier.height(6.dp))
+                        Text("Probabilidad de al menos 1 evento en 7 días:")
+                        f.estimates
+                            .filter { it.magnitudeThreshold >= settings.seismicMinimumMagnitude }
+                            .forEach { estimate ->
+                                ForecastRow(estimate)
+                            }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Es una estimación estadística basada en tasa histórica; no predice fecha, lugar exacto ni garantiza un terremoto.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
                 }
             }
         }
+
+        item {
+            Text("Últimos eventos", style = MaterialTheme.typography.titleMedium)
+        }
+
+        items(visible) { event ->
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(
+                        "M" + String.format(Locale.US, "%.1f", event.magnitude) +
+                            " · " + event.place,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(event.occurredAtLocal + " · " + String.format(Locale.US, "%.1f km", event.depthKm))
+                    if (event.latitude != null && event.longitude != null) {
+                        Text(
+                            String.format(
+                                Locale.US,
+                                "%.4f, %.4f",
+                                event.latitude,
+                                event.longitude
+                            )
+                        )
+                    }
+                    Text("Fuente: " + event.source)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ForecastRow(estimate: SeismicEstimate) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text("M≥" + String.format(Locale.US, "%.1f", estimate.magnitudeThreshold))
+        Text(String.format(Locale.US, "%.2f %%", estimate.probability7d * 100.0))
+    }
+}
+
+@Composable
+private fun ControlPanel(onRestart: () -> Unit) {
+    Column(Modifier.fillMaxSize()) {
+        Text("Control", style = MaterialTheme.typography.headlineSmall)
+        Text("Estado del control local y puente OTA.", style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(10.dp))
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Bridge", style = MaterialTheme.typography.titleMedium)
+                Text("La cola remota usa autenticación de dispositivo y transiciones de estado.")
+                Text("OTA", style = MaterialTheme.typography.titleMedium)
+                Text("Las mejoras que cambian la APK requieren una compilación firmada.")
+                OutlinedButton(onClick = onRestart) { Text("Recargar interfaz") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsPanel(
+    settings: AppSettings,
+    onChange: (AppSettings) -> Unit
+) {
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item {
+            Text("Configuración", style = MaterialTheme.typography.headlineSmall)
+            Text("Preferencias persistentes de IAC33.", style = MaterialTheme.typography.bodySmall)
+        }
+        item {
+            SettingSwitch(
+                title = "IA local primero",
+                description = "Evita depender del proveedor remoto cuando el modo local sea suficiente.",
+                checked = settings.aiLocalFirst,
+                onCheckedChange = { onChange(settings.copy(aiLocalFirst = it)) }
+            )
+        }
+        item {
+            SettingSwitch(
+                title = "Actualizar sismicidad automáticamente",
+                description = "Consulta nuevos datos cada cinco minutos mientras el módulo está abierto.",
+                checked = settings.seismicAutoRefresh,
+                onCheckedChange = { onChange(settings.copy(seismicAutoRefresh = it)) }
+            )
+        }
+        item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("Magnitud mínima visible")
+                    Text("M" + String.format(Locale.US, "%.1f", settings.seismicMinimumMagnitude))
+                    Slider(
+                        value = settings.seismicMinimumMagnitude,
+                        onValueChange = { value ->
+                            val rounded = (value * 10f).toInt() / 10f
+                            onChange(settings.copy(seismicMinimumMagnitude = rounded.coerceIn(2.5f, 5.0f)))
+                        },
+                        valueRange = 2.5f..5.0f
+                    )
+                }
+            }
+        }
+        item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("Zoom de mapas")
+                    Text(settings.mapZoom.toString())
+                    Slider(
+                        value = settings.mapZoom.toFloat(),
+                        onValueChange = { value ->
+                            onChange(settings.copy(mapZoom = value.toInt().coerceIn(3, 8)))
+                        },
+                        valueRange = 3f..8f,
+                        steps = 4
+                    )
+                }
+            }
+        }
+        item {
+            SettingSwitch(
+                title = "Vibración",
+                description = "Reserva la vibración para acciones y alertas futuras.",
+                checked = settings.haptics,
+                onCheckedChange = { onChange(settings.copy(haptics = it)) }
+            )
+        }
+        item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("IAC33 " + BuildConfig.VERSION_NAME, style = MaterialTheme.typography.titleMedium)
+                    Text(BuildConfig.IAC33_BACKEND_URL)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(onClick = { onChange(AppSettings()) }) {
+                        Text("Restaurar valores")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingSwitch(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(description, style = MaterialTheme.typography.bodySmall)
+            }
+            Switch(checked = checked, onCheckedChange = onCheckedChange)
+        }
+    }
+}
+
+private fun probeBackend(baseUrl: String): String {
+    val connection = (URL(baseUrl.trimEnd('/') + "/health").openConnection() as HttpURLConnection).apply {
+        requestMethod = "GET"
+        connectTimeout = 6_000
+        readTimeout = 6_000
+        setRequestProperty("Accept", "application/json")
+    }
+    return try {
+        val status = connection.responseCode
+        val body = (if (status in 200..299) connection.inputStream else connection.errorStream)
+            ?.bufferedReader()
+            ?.use { it.readText() }
+            .orEmpty()
+        "HTTP " + status + " · " + body.take(180)
+    } finally {
+        connection.disconnect()
     }
 }
