@@ -107,7 +107,7 @@ try {
   assert.equal(otaRow.rows[0].type, 'OTA_INSTALL');
   assert.equal(otaRow.rows[0].status, 'SUCCEEDED');
   const audit = await db.query('SELECT from_status,to_status FROM command_audit WHERE command_id=$1 ORDER BY id', [ota.id]);
-  assert.deepEqual(audit.rows.map((r) => [r.from_status, r.to_status]), [['PENDING', 'CLAIMED'], ['CLAIMED', 'EXECUTING'], ['EXECUTING', 'SUCCEEDED']]);
+  assert.deepEqual(audit.rows.map((r) => [r.from_status, r.to_status]), [[null, 'PENDING'], ['PENDING', 'CLAIMED'], ['CLAIMED', 'EXECUTING'], ['EXECUTING', 'SUCCEEDED']]);
 } finally {
   await db.end();
 }
