@@ -35,7 +35,19 @@ class AiRouter(
 
             try {
                 when (val result = provider.generate(request)) {
-                    is OperationResult.Success -> return result
+                    is OperationResult.Success -> {
+                        if (provider.id == "local-fallback" && lastFailure != null) {
+                            val value = result.value
+                            return OperationResult.Success(
+                                value.copy(
+                                    text = "Respaldo local activado tras fallo remoto: " +
+                                        lastFailure!!.error + " · " + lastFailure!!.message + "\n\n" +
+                                        value.text.orEmpty()
+                                )
+                            )
+                        }
+                        return result
+                    }
                     is OperationResult.Failure -> lastFailure = result
                 }
             } catch (error: Exception) {
