@@ -82,6 +82,7 @@ class MainActivity : ComponentActivity() {
                 val locationReader = remember { LocationReader(this@MainActivity) }
                 val lifecycleOwner = LocalLifecycleOwner.current
                 val locationScope = rememberCoroutineScope()
+                var chatLines by rememberSaveable { mutableStateOf(listOf(ChatLine("assistant", "IAC33 listo. Puedes escribir una consulta."))) }
 
                 DisposableEffect(Unit) {
                     connectivityMonitor.start { status -> connectivityStatus = status }
@@ -121,7 +122,7 @@ class MainActivity : ComponentActivity() {
                     }
                 ) { padding ->
                     Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp).imePadding()) {
-                        if (selected == 0) AiPanel()
+                        if (selected == 0) AiPanel(lines = chatLines, onLinesChange = { chatLines = it })
                         else if (selected == 1) SeismicPanel()
                         else if (selected == 4) GpsPanel(location)
                         else DashboardPanel(sections[selected], connectivityStatus)
@@ -143,12 +144,11 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun AiPanel() {
+private fun AiPanel(lines: List<ChatLine>, onLinesChange: (List<ChatLine>) -> Unit) {
     val engine = remember { AiEngineImpl() }
     val scope = rememberCoroutineScope()
     var draft by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
-    var lines by remember { mutableStateOf(listOf(ChatLine("assistant", "IAC33 listo. Puedes escribir una consulta."))) }
     val listState = rememberLazyListState()
 
     LaunchedEffect(lines.size) {
@@ -165,62 +165,40 @@ private fun AiPanel() {
         }
         Spacer(Modifier.height(8.dp))
         Card(Modifier.fillMaxWidth().weight(1f), shape = RoundedCornerShape(20.dp)) {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(12.dp),
-                state = listState,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            LazyColumn(modifier = Modifier.fillMaxSize().padding(12.dp), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(lines) { line ->
-                    Text(
-                        text = if (line.role == "user") "Tú: ${line.text}" else "IAC33: ${line.text}",
-                        style = if (line.role == "user") MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium
-                    )
+                    Surface(color = if (line.role == "user") MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                        Text(text = if (line.role == "user") "TÚ\n${line.text}" else "IAC33\n${line.text}", modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.bodyLarge)
+                    }
                 }
             }
         }
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                value = draft,
-                onValueChange = { if (it.length <= 32_000) draft = it },
-                modifier = Modifier.weight(1f),
-                enabled = !busy,
-                placeholder = { Text("Escribe una consulta a IAC33…") },
-                shape = RoundedCornerShape(16.dp),
-                singleLine = false,
-                maxLines = 4
-            )
+            OutlinedTextField(value = draft, onValueChange = { if (it.length <= 32_000) draft = it }, modifier = Modifier.weight(1f), enabled = !busy, placeholder = { Text("Escribe una consulta a IAC33…") }, shape = RoundedCornerShape(16.dp), singleLine = false, maxLines = 4)
             Button(
                 onClick = {
                     val prompt = draft.trim()
                     if (prompt.isEmpty() || busy) return@Button
                     val updated = lines + ChatLine("user", prompt)
-                    lines = updated
+                    onLinesChange(updated)
                     draft = ""
                     busy = true
                     scope.launch {
                         try {
-                            val messages = updated.map { AiMessage(it.role, it.text) }
-                            val result = runCatching {
-                                engine.generate(AiRequest(UUID.randomUUID().toString(), messages))
-                            }.getOrElse { throwable ->
-                                OperationResult.Failure(OperationError.INTERNAL, throwable.message ?: "Error interno de IA")
-                            }
+                            val messages = listOf(AiMessage("system", "Responde siempre en español. Sé claro, directo y natural. No cambies de idioma salvo que el usuario lo solicite.")) + updated.takeLast(24).map { AiMessage(it.role, it.text) }
+                            val result = runCatching { engine.generate(AiRequest(UUID.randomUUID().toString(), messages)) }.getOrElse { throwable -> OperationResult.Failure(OperationError.INTERNAL, throwable.message ?: "Error interno de IA") }
                             when (result) {
-                                is OperationResult.Success -> lines = lines + ChatLine("assistant", result.value.text.orEmpty().ifBlank { "Respuesta vacía." })
-                                is OperationResult.Failure -> lines = lines + ChatLine("assistant", "Error: ${result.message}")
+                                is OperationResult.Success -> onLinesChange(updated + ChatLine("assistant", result.value.text.orEmpty().ifBlank { "Respuesta vacía." }))
+                                is OperationResult.Failure -> onLinesChange(updated + ChatLine("assistant", "Error: ${result.message}"))
                             }
-                        } finally {
-                            busy = false
-                        }
+                        } finally { busy = false }
                     }
                 },
                 enabled = !busy && draft.isNotBlank(),
                 modifier = Modifier.height(56.dp),
                 shape = RoundedCornerShape(16.dp)
-            ) {
-                Text(if (busy) "…" else "Enviar")
-            }
+            ) { Text(if (busy) "…" else "Enviar") }
         }
     }
 }
