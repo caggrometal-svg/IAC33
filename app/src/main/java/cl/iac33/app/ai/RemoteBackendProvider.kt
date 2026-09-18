@@ -5,6 +5,7 @@ import cl.iac33.app.core.AiResult
 import cl.iac33.app.core.OperationError
 import cl.iac33.app.core.OperationResult
 import cl.iac33.app.BuildConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -69,6 +70,9 @@ class RemoteBackendProvider(
                     latencyMs = System.currentTimeMillis() - started
                 )
             )
+        } catch (error: CancellationException) {
+            // Compose cancellation is lifecycle control, not an AI/network failure.
+            throw error
         } catch (error: Exception) {
             val operationError = if (error is java.net.SocketTimeoutException) OperationError.TIMEOUT else OperationError.NETWORK
             OperationResult.Failure(operationError, error.message ?: "AI backend request failed")
