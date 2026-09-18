@@ -73,6 +73,7 @@ fun IAC33Map(
             update = { map ->
                 val target = GeoPoint(safeLat, safeLon)
 
+                // IAC33 field navigation: preserve user map control across UI refreshes.
                 // Only apply external position changes. Do not recenter on every Compose
                 // recomposition, otherwise the user cannot pan/zoom freely.
                 if (appliedCenter == null ||
