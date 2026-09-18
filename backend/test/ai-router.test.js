@@ -218,3 +218,36 @@ test('rejects unsafe configurable endpoints and uses the trusted Kilo endpoint',
   assert.equal(result.text, 'trusted');
   assert.equal(requestedUrl, 'https://api.kilo.ai/api/gateway/chat/completions');
 });
+
+
+test('routes through the recovered Andrew2 Render backend', async () => {
+  process.env.AI_PROVIDER_ORDER = 'andrew2';
+  let requestedUrl = '';
+  globalThis.fetch = async (url, options) => {
+    requestedUrl = String(url);
+    assert.equal(options.headers['x-iac33-bridge'], 'IAC33/Andrew2');
+    return new Response(
+      JSON.stringify({ ok: true, provider: 'openai', model: 'gpt-5.6-luna', text: 'andrew2-ok' }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+  };
+  const result = await router.generateWithFreePool({ messages, timeoutMs: 2000 });
+  assert.equal(result.provider, 'andrew2');
+  assert.equal(result.text, 'andrew2-ok');
+  assert.equal(requestedUrl, 'https://andrew2-api.onrender.com/v1/ai/generate');
+});
+
+test('keeps legacy Anthropic source available as an optional fallback', async () => {
+  process.env.AI_PROVIDER_ORDER = 'anthropic';
+  process.env.ANTHROPIC_API_KEY = 'test-anthropic';
+  globalThis.fetch = async (url) => {
+    assert.equal(new URL(String(url)).hostname, 'api.anthropic.com');
+    return new Response(
+      JSON.stringify({ content: [{ text: 'anthropic-ok' }], model: 'claude-test' }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+  };
+  const result = await router.generateWithFreePool({ messages, timeoutMs: 2000 });
+  assert.equal(result.provider, 'anthropic');
+  assert.equal(result.text, 'anthropic-ok');
+});
