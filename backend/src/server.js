@@ -56,7 +56,8 @@ function send(res, status, body) {
 }
 
 function clientKey(req) {
-  return String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown').split(',')[0].trim().slice(0, 128);
+  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',').map((value) => value.trim()).filter(Boolean);
+  return (forwarded.at(-1) || req.socket.remoteAddress || 'unknown').slice(0, 128);
 }
 
 function pairingAllowed(req) {
