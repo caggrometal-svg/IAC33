@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const router = await import(`../src/ai-router.js?test=${Date.now()}-${Math.random()}`);
+const router = await import(\`../src/ai-router.js?test=\${Date.now()}-\${Math.random()}\`);
 const originalFetch = globalThis.fetch;
 const originalEnv = { ...process.env };
 
@@ -59,9 +59,10 @@ test('fails over silently from a 503 provider to the next provider', async () =>
   process.env.AI_PROVIDER_ORDER = 'openrouter,groq';
   process.env.OPENROUTER_API_KEY = 'test-openrouter';
   process.env.GROQ_API_KEY = 'test-groq';
-  process.env.AI_PROVIDER_RETRIES = '2';
+  process.env.AI_PROVIDER_RETRIES = '1';
   globalThis.fetch = async (url) => {
-    if (String(url).includes('openrouter.ai')) {
+    const host = new URL(String(url)).hostname;
+    if (host === 'openrouter.ai') {
       return new Response(
         JSON.stringify({ error: { message: 'down' } }),
         { status: 503, headers: { 'content-type': 'application/json' } }
@@ -134,7 +135,7 @@ test('uses a global connectivity budget', async () => {
   globalThis.fetch = async (_url, options) => {
     observedSignal = options.signal;
     return new Response(
-      JSON.stringify({ choices: [{ message: { content: 'budget-ok' } }] }),
+      JSON.stringify({ choices: [{ message: { content: 'budget-ok' } }]}),
       { status: 200, headers: { 'content-type': 'application/json' } }
     );
   };
@@ -142,4 +143,63 @@ test('uses a global connectivity budget', async () => {
   const result = await router.generateWithFreePool({ messages, timeoutMs: 10000 });
   assert.equal(result.text, 'budget-ok');
   assert.equal(observedSignal.aborted, false);
+});
+
+test('aborts losing providers after the winner responds', async () => {
+  process.env.AI_PROVIDER_ORDER = 'kilo,horde';
+  process.env.AI_PROVIDER_RETRIES = '1';
+  let loserAborted = false;
+
+  globalThis.fetch = async (url, options) => {
+    const host = new URL(String(url)).hostname;
+    if (host === 'api.kilo.ai') {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: 'winner' } }]}),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }
+    if (host === 'aihorde.net') {
+      return new Promise((resolve, reject) => {
+        if (options.signal.aborted) {
+          loserAborted = true;
+          const error = new Error('aborted');
+          error.name = 'AbortError';
+          reject(error);
+          return;
+        }
+        options.signal.addEventListener('abort', () => {
+          loserAborted = true;
+          const error = new Error('aborted');
+          error.name = 'AbortError';
+          reject(error);
+        }, { once: true });
+      });
+    }
+    throw new Error('unexpected host');
+  };
+
+  const result = await router.generateWithFreePool({ messages, timeoutMs: 2000 });
+  assert.equal(result.provider, 'kilo');
+  assert.equal(result.text, 'winner');
+  assert.equal(loserAborted, true);
+});
+
+test('rejects unsafe configurable endpoints and uses the trusted Kilo endpoint', async () => {
+  process.env.AI_PROVIDER_ORDER = 'kilo';
+  process.env.KILO_ENDPOINTS = 'https://evil.example/v1/chat/completions,https://api.kilo.ai/api/gateway/chat/completions';
+  let requestedUrl = '';
+
+  globalThis.fetch = async (url) => {
+    requestedUrl = String(url);
+    return new Response(
+      JSON.stringify({ choices: [{ message: { content: 'trusted' } }]}),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+  };
+
+  const result = await router.generateWithFreePool({ messages, timeoutMs: 1000 });
+  assert.equal(result.provider, 'kilo');
+  assert.equal(result.text, 'trusted');
+  assert.equal(requestedUrl, 'https://api.kilo.ai/api/gateway/chat/completions');
 });
