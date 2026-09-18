@@ -58,16 +58,12 @@ jobs:
 
             wait_for_android
 
-            # Refresh ADB after emulator boot. The previous run showed an ADB protocol
-            # fault immediately before PackageInstaller verification timed out.
             adb kill-server || true
             adb start-server
             adb reconnect offline || true
             sleep 3
             wait_for_android
 
-            # Disable ADB/package verification paths that can stall test APK installs.
-            # Keep the integrity verifier timeout explicit for slow CI emulator startup.
             adb shell settings put global verifier_verify_adb_installs 0 || true
             adb shell settings put global package_verifier_enable 0 || true
             adb shell settings put global package_verifier_user_consent 1 || true
@@ -81,10 +77,9 @@ jobs:
             adb shell settings get global package_verifier_enable || true
 
             run_connected_tests() {
-              timeout 15m gradle connectedDebugAndroidTest --no-daemon --stacktrace --console=plain
+              timeout 10m gradle connectedDebugAndroidTest --no-daemon --stacktrace --console=plain
             }
 
-            # Retry only for transient emulator/ADB/package-install failures.
             set +e
             run_connected_tests > /tmp/iac33-connected-e2e.log 2>&1
             status=$?
