@@ -79,8 +79,8 @@ import java.util.UUID
 
 data class ChatLine(val role: String, val text: String)
 
-private val sections = listOf("IA", "Sismos", "C33", "Red", "GPS", "Multimedia", "Control", "Config")
-private val sectionGlyphs = listOf("AI", "EQ", "C33", "NET", "GPS", "MED", "CTL", "CFG")
+private val sections = listOf("IA", "Sismos", "C33", "Multimedia", "Más")
+private val sectionGlyphs = listOf("AI", "EQ", "C33", "MED", "•••")
 
 @OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
@@ -94,7 +94,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            val colors = MaterialTheme.colorScheme
             val settingsStore = remember { SettingsStore(this@MainActivity) }
             var settings by remember { mutableStateOf(settingsStore.load()) }
             var selected by rememberSaveable { mutableIntStateOf(0) }
@@ -133,7 +132,7 @@ class MainActivity : ComponentActivity() {
                 onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
             }
 
-            MaterialTheme {
+            IAC33Theme {
                 Scaffold(
                     topBar = {
                         TopAppBar(
@@ -152,11 +151,8 @@ class MainActivity : ComponentActivity() {
                         NavigationBar {
                             sections.forEachIndexed { index, label ->
                                 NavigationBarItem(
-                                    selected = selected == index,
-                                    onClick = {
-                                        selected = index
-                                        if (index == 4 && !hasLocationPermission()) requestLocationPermission()
-                                    },
+                                    selected = if (index == 4) selected >= 4 else selected == index,
+                                    onClick = { selected = index },
                                     icon = {
                                         Text(
                                             sectionGlyphs[index],
@@ -192,11 +188,17 @@ class MainActivity : ComponentActivity() {
                             )
                             1 -> SeismicPanel(settings)
                             2 -> C33Panel(chatCount = chatLines.size)
-                            3 -> RedPanel(connectivityStatus)
-                            4 -> GpsPanel(location, settings.mapZoom)
-                            5 -> MultimediaPanel()
-                            6 -> ControlPanel(onRestart = { recreate() })
-                            7 -> SettingsPanel(settings, ::saveSettings)
+                            3 -> MultimediaPanel()
+                            4 -> MorePanel(
+                                onOpen = { destination ->
+                                    selected = destination
+                                    if (destination == 6 && !hasLocationPermission()) requestLocationPermission()
+                                }
+                            )
+                            5 -> RedPanel(connectivityStatus)
+                            6 -> GpsPanel(location, settings.mapZoom)
+                            7 -> ControlPanel(onRestart = { recreate() })
+                            8 -> SettingsPanel(settings, ::saveSettings)
                         }
                     }
                 }
@@ -346,6 +348,38 @@ private fun AiPanel(
                 enabled = !busy && draft.isNotBlank(),
                 modifier = Modifier.height(56.dp)
             ) { Text(if (busy) "…" else "Enviar") }
+        }
+    }
+}
+
+@Composable
+private fun MorePanel(onOpen: (Int) -> Unit) {
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            Text("Más herramientas", style = MaterialTheme.typography.headlineSmall)
+            Text("Funciones secundarias agrupadas para mantener la navegación limpia.", style = MaterialTheme.typography.bodySmall)
+        }
+        item { ToolCard("Red", "Conectividad y prueba del backend", "NET") { onOpen(5) } }
+        item { ToolCard("GPS", "Ubicación y mapa del dispositivo", "GPS") { onOpen(6) } }
+        item { ToolCard("Control", "Estado local y Bridge OTA", "CTL") { onOpen(7) } }
+        item { ToolCard("Configuración", "Preferencias y parámetros", "CFG") { onOpen(8) } }
+    }
+}
+
+@Composable
+private fun ToolCard(title: String, description: String, glyph: String, onClick: () -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(glyph, style = MaterialTheme.typography.labelLarge)
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(description, style = MaterialTheme.typography.bodySmall)
+            }
+            OutlinedButton(onClick = onClick) { Text("Abrir") }
         }
     }
 }
