@@ -120,8 +120,8 @@ jobs:
           keytool -list -keystore "$KEYSTORE_PATH" -storepass "$KEYSTORE_PASSWORD" >/dev/null
           OTA_PUBLIC_KEY_B64="$(sed -n 's/^IAC33_OTA_PUBLIC_KEY_B64=//p' gradle.properties | head -n1)"
           test -n "$OTA_PUBLIC_KEY_B64"
-          BASE_VERSION="$(grep -oE 'versionName = [^\n]+' app/build.gradle.kts | head -n1 | sed -E 's/.*orElse\("([^"]+)"\).*/\1/' )"
-          if [ -z "$BASE_VERSION" ]; then BASE_VERSION="$(grep -oE 'versionName = "[0-9.]+"' app/build.gradle.kts | head -n1 | sed -E 's/.*"([0-9.]+)".*/\1/' )"; fi
+          BASE_VERSION="$(sed -n 's/.*orElse("\([^"]*\)").*/\1/p' app/build.gradle.kts | head -n1)"
+          if [ -z "$BASE_VERSION" ]; then BASE_VERSION="$(sed -n 's/.*versionName = "\([0-9.]*\)".*/\1/p' app/build.gradle.kts | head -n1)"; fi
           test -n "$BASE_VERSION"
           IFS=. read -r VMAJOR VMINOR VPATCH VEXTRA <<< "$BASE_VERSION"
           VMAJOR="${VMAJOR:-0}"; VMINOR="${VMINOR:-0}"; VPATCH="${VPATCH:-0}"
