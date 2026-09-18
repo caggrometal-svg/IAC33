@@ -20,9 +20,9 @@ data class OtaManifest(
     fun isContractValid(): Boolean =
         schemaVersion == 1 &&
             releaseId.isNotBlank() &&
-            appVersion.isNotBlank() &&
+            appVersion.matches(Regex("\\d+(\\.\\d+){2,3}")) &&
             createdAt.isNotBlank() &&
-            minimumSupportedVersion.isNotBlank() &&
+            minimumSupportedVersion.matches(Regex("\\d+(\\.\\d+){2,3}")) &&
             artifactRef.isNotBlank() &&
             artifactSha256.matches(Regex("[0-9a-fA-F]{64}")) &&
             artifactSize > 0L &&
@@ -37,3 +37,16 @@ enum class OtaStage {
 }
 
 data class OtaState(val releaseId: String?, val stage: OtaStage, val previousReleaseId: String? = null)
+
+fun compareOtaVersions(left: String, right: String): Int {
+    fun parse(value: String): List<Int> = value.split('.').map(String::toInt)
+    val a = parse(left)
+    val b = parse(right)
+    val size = maxOf(a.size, b.size)
+    for (i in 0 until size) {
+        val av = a.getOrElse(i) { 0 }
+        val bv = b.getOrElse(i) { 0 }
+        if (av != bv) return av.compareTo(bv)
+    }
+    return 0
+}
