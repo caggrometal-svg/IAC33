@@ -78,10 +78,10 @@ jobs:
           if b"-----BEGIN " in raw:
               key = raw
           else:
-              key = base64.b64decode(raw, validate=True)
+              key = base64.b64decode(b"".join(raw.split()), validate=True)
               if b"-----BEGIN " not in key and len(key) != 32:
                   try:
-                      key = base64.b64decode(key, validate=True)
+                      key = base64.b64decode(b"".join(key.split()), validate=True)
                   except Exception:
                       pass
           pathlib.Path(str(dst) + ".raw").write_bytes(key)
