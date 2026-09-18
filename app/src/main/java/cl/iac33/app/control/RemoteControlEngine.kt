@@ -55,7 +55,7 @@ class RemoteControlEngine(
                     .put("expectedAppVersion", pending.appVersion)
                     .put("idempotencyKey", pending.idempotencyKey))
                 val failResponse = request("/v1/device/commands/${pending.commandId}/fail", failBody.toString(), signed = true)
-                if (failResponse.first !in 200..299) {
+                if (failResponse.first !in 200..299 && failResponse.first !in setOf(404, 409)) {
                     return@withContext OperationResult.Failure(OperationError.PROVIDER, failResponse.second.optString("error", "OTA fail ACK failed"))
                 }
                 pendingOta.clear()
