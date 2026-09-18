@@ -37,9 +37,9 @@ jobs:
       E2E_BASE_URL: http://127.0.0.1:8787
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Set up Node 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
       - name: Install backend
