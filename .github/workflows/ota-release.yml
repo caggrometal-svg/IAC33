@@ -78,7 +78,11 @@ jobs:
           openssl pkey -in "$PEM" -pubout -outform DER -out "$PUB"
           OTA_PUBLIC_KEY_B64="$(base64 -w0 "$PUB")"
           CURRENT_PUBLIC="$(sed -n 's/^IAC33_OTA_PUBLIC_KEY_B64=//p' gradle.properties | head -n1)"
+          LAST_ANCHOR_COMMIT="$(git log -1 --format=%s -- gradle.properties || true)"
           OTA_BOOTSTRAP=0
+          if [ "$CURRENT_PUBLIC" != "$OTA_PUBLIC_KEY_B64" ] || [ "$LAST_ANCHOR_COMMIT" = "chore(ota): align trust anchor with active Bridge signer" ]; then
+            OTA_BOOTSTRAP=1
+          fi
 
           if [ "$CURRENT_PUBLIC" != "$OTA_PUBLIC_KEY_B64" ]; then
             OTA_BOOTSTRAP=1
@@ -125,9 +129,20 @@ jobs:
           if [ -z "$BASE_VERSION_CODE" ]; then BASE_VERSION_CODE="$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' app/build.gradle.kts | head -n1)"; fi
           test -n "$BASE_VERSION_CODE"
           OTA_VERSION_CODE="$((BASE_VERSION_CODE * 100000 + GITHUB_RUN_NUMBER))"
-          OTA_VERSION_NAME="${VMAJOR}.${VMINOR}.${VPATCH}.${GITHUB_RUN_NUMBER}"
+          OTA_VERSION_NAME="$VMAJOR.$VMINOR.$VPATCH.$GITHUB_RUN_NUMBER"
+          BOOTSTRAP_VERSION="$(sed -n 's/^IAC33_OTA_BOOTSTRAP_VERSION=//p' gradle.properties | head -n1)"
+          if [ "$OTA_BOOTSTRAP" = "1" ] && [ -z "$BOOTSTRAP_VERSION" ]; then
+            printf '\nIAC33_OTA_BOOTSTRAP_VERSION=%s\n' "$OTA_VERSION_NAME" >> gradle.properties
+            git config user.name "iac33-ota[bot]"
+            git config user.email "iac33-ota[bot]@users.noreply.github.com"
+            git add gradle.properties
+            git commit -m "chore(ota): record bootstrap version"
+            git push
+            BOOTSTRAP_VERSION="$OTA_VERSION_NAME"
+          fi
           echo "IAC33_VERSION_NAME=$OTA_VERSION_NAME" >> "$GITHUB_ENV"
           echo "IAC33_VERSION_CODE=$OTA_VERSION_CODE" >> "$GITHUB_ENV"
+          echo "IAC33_OTA_BOOTSTRAP_VERSION=$BOOTSTRAP_VERSION" >> "$GITHUB_ENV"
           printf '%s' "$OTA_PUBLIC_KEY_B64" | base64 --decode > "$RUNNER_TEMP/iac33-ota-public-key.der"
           openssl pkey -pubin -inform DER -in "$RUNNER_TEMP/iac33-ota-public-key.der" -text -noout >/dev/null
           gradle assembleRelease --no-daemon --stacktrace --console=plain \
@@ -300,13 +315,18 @@ jobs:
           OIDC_AUDIENCE: iac33-backend
         run: |
           set -eu
-          if [ "${OTA_BOOTSTRAP:-0}" = "1" ]; then
-            echo "Bootstrap OTA release created without queueing to the old trust anchor."
-            exit 0
-          fi
           test -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN"
           OIDC_TOKEN="$(curl --fail-with-body --silent --show-error             -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$OIDC_AUDIENCE" | jq -er '.value')"
           test -n "$OIDC_TOKEN"
+          if [ -n "$IAC33_OTA_BOOTSTRAP_VERSION" ]; then
+            BOOTSTRAP_STATUS="$(curl --fail-with-body --silent --show-error \
+              -H "Authorization: Bearer $OIDC_TOKEN" \
+              "$BACKEND_URL/v1/gpt/ota/bootstrap-status?requiredVersion=$IAC33_OTA_BOOTSTRAP_VERSION" | jq -er '.confirmed')"
+            if [ "$BOOTSTRAP_STATUS" != "true" ]; then
+              echo "OTA bootstrap not yet confirmed on an installed device."
+              exit 0
+            fi
+          fi
           VERSION_NAME="$OTA_VERSION_NAME"
           TAG="ota-$VERSION_NAME-$GITHUB_RUN_NUMBER"
           ARTIFACT_NAME="iac33-$TAG.apk"
