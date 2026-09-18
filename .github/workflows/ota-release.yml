@@ -34,6 +34,71 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
+      - name: Resolve Bridge ECDSA trust anchor
+        env:
+          BRIDGE_KEY_B64: ${{ secrets.BRIDGE_ECDSA_PRIVATE_KEY_B64 }}
+          KEY_PASSWORD: ${{ secrets.IAC33_ANDROID_KEY_PASSWORD }}
+          KEYSTORE_PASSWORD: ${{ secrets.IAC33_ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -eu
+          test -n "$BRIDGE_KEY_B64"
+          test -n "$KEY_PASSWORD"
+          test -n "$KEYSTORE_PASSWORD"
+          RAW="$RUNNER_TEMP/bridge-key-bootstrap.raw"
+          PEM="$RUNNER_TEMP/bridge-key-bootstrap.pem"
+          PUB="$RUNNER_TEMP/bridge-key-bootstrap.pub.der"
+
+          printf '%s' "$BRIDGE_KEY_B64" | base64 --decode > "$RAW"
+          rm -f "$PEM" "$PUB"
+
+          if openssl pkey -in "$RAW" -out "$PEM" 2>/dev/null; then
+            :
+          elif openssl pkey -inform DER -in "$RAW" -out "$PEM" 2>/dev/null; then
+            :
+          elif openssl ec -inform DER -in "$RAW" -out "$PEM" 2>/dev/null; then
+            :
+          elif openssl pkcs8 -inform DER -in "$RAW" -nocrypt -out "$PEM" 2>/dev/null; then
+            :
+          else
+            for PASS in "$KEY_PASSWORD" "$KEYSTORE_PASSWORD" ""; do
+              rm -f "$PEM"
+              if openssl pkcs12 -in "$RAW" -nocerts -nodes -passin pass:"$PASS" -out "$PEM" 2>/dev/null; then
+                break
+              fi
+            done
+          fi
+
+          test -s "$PEM"
+          CURVE="$(openssl pkey -in "$PEM" -text -noout 2>/dev/null | grep -E 'ASN1 OID:|NIST CURVE:' | tail -n1 || true)"
+          case "$CURVE" in
+            *prime256v1*|*"P-256"*) ;;
+            *) echo "Bridge signing key is not EC P-256" >&2; exit 1 ;;
+          esac
+
+          openssl pkey -in "$PEM" -pubout -outform DER -out "$PUB"
+          OTA_PUBLIC_KEY_B64="$(base64 -w0 "$PUB")"
+          CURRENT_PUBLIC="$(sed -n 's/^IAC33_OTA_PUBLIC_KEY_B64=//p' gradle.properties | head -n1)"
+          OTA_BOOTSTRAP=0
+
+          if [ "$CURRENT_PUBLIC" != "$OTA_PUBLIC_KEY_B64" ]; then
+            OTA_BOOTSTRAP=1
+            if grep -q '^IAC33_OTA_PUBLIC_KEY_B64=' gradle.properties; then
+              sed -i "s#^IAC33_OTA_PUBLIC_KEY_B64=.*#IAC33_OTA_PUBLIC_KEY_B64=$OTA_PUBLIC_KEY_B64#" gradle.properties
+            else
+              printf '\nIAC33_OTA_PUBLIC_KEY_B64=%s\n' "$OTA_PUBLIC_KEY_B64" >> gradle.properties
+            fi
+            git config user.name "iac33-ota[bot]"
+            git config user.email "iac33-ota[bot]@users.noreply.github.com"
+            git add gradle.properties
+            git commit -m "chore(ota): align trust anchor with active Bridge signer"
+            git push
+            echo "BOOTSTRAP_REQUIRED=1"
+          fi
+
+          echo "OTA_PUBLIC_KEY_B64=$OTA_PUBLIC_KEY_B64" >> "$GITHUB_ENV"
+          echo "BRIDGE_PEM_PATH=$PEM" >> "$GITHUB_ENV"
+          echo "OTA_BOOTSTRAP=$OTA_BOOTSTRAP" >> "$GITHUB_ENV"
+
       - name: Build signed release APK
         env:
           KEYSTORE_PATH: ${{ runner.temp }}/iac33-release.keystore
@@ -228,6 +293,10 @@ jobs:
           OIDC_AUDIENCE: iac33-backend
         run: |
           set -eu
+          if [ "${OTA_BOOTSTRAP:-0}" = "1" ]; then
+            echo "Bootstrap OTA release created without queueing to the old trust anchor."
+            exit 0
+          fi
           test -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN"
           OIDC_TOKEN="$(curl --fail-with-body --silent --show-error             -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$OIDC_AUDIENCE" | jq -er '.value')"
           test -n "$OIDC_TOKEN"
