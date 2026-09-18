@@ -1,4 +1,4 @@
-// OTA bootstrap: trust is derived from the Android signing key.
+// OTA bootstrap: trust is anchored to the dedicated Bridge ECDSA public key.
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
