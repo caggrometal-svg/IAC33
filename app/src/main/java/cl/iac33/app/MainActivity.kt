@@ -8,6 +8,7 @@ import android.net.NetworkCapabilities
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,10 +24,12 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -49,6 +52,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -327,29 +331,92 @@ private fun AiPanel(
             }
         }
         Spacer(Modifier.height(6.dp))
-        Card(Modifier.fillMaxWidth().weight(1f)) {
+        Card(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF030507)),
+            shape = RoundedCornerShape(22.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
+        ) {
             LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(10.dp),
+                modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 12.dp),
                 state = listState,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(lines) { line ->
-                    Card(Modifier.fillMaxWidth()) {
-                        Text(
-                            text = if (line.role == "user") "TÚ\n" + line.text else "IAC33\n" + line.text,
-                            modifier = Modifier.padding(10.dp),
-                            style = MaterialTheme.typography.bodyLarge
-                        )
+                    val isUser = line.role == "user"
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+                    ) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(0.88f),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (isUser) {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant
+                                }
+                            ),
+                            shape = RoundedCornerShape(
+                                topStart = 20.dp,
+                                topEnd = 20.dp,
+                                bottomStart = if (isUser) 20.dp else 6.dp,
+                                bottomEnd = if (isUser) 6.dp else 20.dp
+                            ),
+                            border = BorderStroke(
+                                1.dp,
+                                if (isUser) {
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+                                } else {
+                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
+                                }
+                            )
+                        ) {
+                            Column(Modifier.padding(horizontal = 14.dp, vertical = 11.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                                ) {
+                                    Text(
+                                        "●",
+                                        color = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                    Text(
+                                        if (isUser) "TÚ" else "IAC33",
+                                        color = if (isUser) {
+                                            MaterialTheme.colorScheme.onPrimaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    text = line.text,
+                                    color = if (isUser) {
+                                        MaterialTheme.colorScheme.onPrimaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                            }
+                        }
                     }
                 }
                 if (busy) {
                     item {
                         Row(
-                            Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                            Modifier.fillMaxWidth().padding(vertical = 6.dp, horizontal = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            CircularProgressIndicator(modifier = Modifier.height(18.dp))
+                            CircularProgressIndicator(
+                                modifier = Modifier.height(18.dp),
+                                strokeWidth = 2.dp
+                            )
                             Text("IAC33 está procesando…", style = MaterialTheme.typography.bodySmall)
                         }
                     }
