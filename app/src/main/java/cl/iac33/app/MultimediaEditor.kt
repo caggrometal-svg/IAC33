@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -54,7 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -95,7 +96,7 @@ private data class TimelineLayer(
     val uri: Uri? = null
 )
 
-@OptIn(UnstableApi::class)
+@OptIn(UnstableApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun MultimediaPanel() {
     val context = LocalContext.current
@@ -385,9 +386,9 @@ private fun EditorStudio(
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 if (previewPlayer != null) {
                     AndroidView(
-                        Modifier.fillMaxSize(),
                         factory = { ctx -> PlayerView(ctx).apply { player = previewPlayer; useController = true } },
-                        update = { it.player = previewPlayer }
+                        modifier = Modifier.fillMaxSize(),
+                        update = { view -> view.player = previewPlayer }
                     )
                 } else {
                     Text("Importa una foto o vídeo", color = Color.White)
