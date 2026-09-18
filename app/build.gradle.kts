@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "cl.iac33.app"
-    compileSdk = 35
+    compileSdk = 36
     defaultConfig {
         applicationId = "cl.iac33.app"
         minSdk = 26
