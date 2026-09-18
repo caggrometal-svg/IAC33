@@ -42,6 +42,15 @@ const enrolled = await request('/v1/devices/enroll', {
 });
 assert.equal(enrolled.status, 201, JSON.stringify(enrolled.json));
 
+const replacementPair = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+const replacementPublicKeyPem = replacementPair.publicKey.export({ type: 'spki', format: 'pem' });
+const replacementAttempt = await request('/v1/devices/enroll', {
+  body: { deviceId, publicKeyPem: replacementPublicKeyPem, pairingToken }
+});
+assert.equal(replacementAttempt.status, 409, JSON.stringify(replacementAttempt.json));
+assert.equal(replacementAttempt.json.error, 'DEVICE_ID_ALREADY_ENROLLED');
+
+
 function signed(path, body, forcedNonce) {
   const timestamp = Date.now();
   const nonce = forcedNonce || crypto.randomUUID().replaceAll('-', '');
@@ -111,6 +120,43 @@ assert.equal(firstReplayProbe.status, 200, JSON.stringify(firstReplayProbe.json)
 const replayRejected = await request('/v1/device/commands/claim-next', replayPayload);
 assert.equal(replayRejected.status, 409, JSON.stringify(replayRejected.json));
 assert.equal(replayRejected.json.error, 'DEVICE_AUTH_REPLAY');
+const staleCommandId = crypto.randomUUID();
+const staleIdempotencyKey = `stale-${crypto.randomUUID()}`;
+const staleCreated = await request('/v1/commands', {
+  body: {
+    id: staleCommandId,
+    type: 'PING',
+    payload: { source: 'lease-recovery-e2e' },
+    idempotencyKey: staleIdempotencyKey,
+    expiresAt: new Date(Date.now() + 15 * 60_000).toISOString()
+  },
+  headers: { authorization: `Bearer ${controlToken}` }
+});
+assert.equal(staleCreated.status, 201, JSON.stringify(staleCreated.json));
+
+const staleClaim = await request('/v1/commands/claim-next', { body: { actor: 'stale-e2e' }, headers: auth });
+assert.equal(staleClaim.status, 200, JSON.stringify(staleClaim.json));
+assert.equal(staleClaim.json.command.id, staleCommandId);
+
+if (databaseUrl) {
+  const dbRecovery = new pg.Pool({ connectionString: databaseUrl, ...(databaseUrl.includes('localhost') || databaseUrl.includes('127.0.0.1') ? {} : { ssl: { rejectUnauthorized: false } }) });
+  try {
+    await dbRecovery.query("UPDATE commands SET claimed_at=now() - interval '11 minutes', updated_at=now() WHERE id=$1", [staleCommandId]);
+  } finally {
+    await dbRecovery.end();
+  }
+}
+
+const staleRecovered = await request('/v1/commands/claim-next', { body: { actor: 'recovery-e2e' }, headers: auth });
+assert.equal(staleRecovered.status, 200, JSON.stringify(staleRecovered.json));
+assert.equal(staleRecovered.json.command.id, staleCommandId);
+assert.equal(staleRecovered.json.command.status, 'CLAIMED');
+
+const staleExecute = await request(`/v1/commands/${staleCommandId}/execute`, { body: {}, headers: auth });
+assert.equal(staleExecute.status, 200, JSON.stringify(staleExecute.json));
+const staleSucceed = await request(`/v1/commands/${staleCommandId}/succeed`, { body: {}, headers: auth });
+assert.equal(staleSucceed.status, 200, JSON.stringify(staleSucceed.json));
+
 
 const badSignature = signed('/v1/device/commands/claim-next', {});
 badSignature.headers['X-Device-Signature'] = crypto.randomBytes(64).toString('base64');
@@ -127,5 +173,7 @@ console.log(JSON.stringify({
   readiness: 'PASS',
   databaseEvidence: databaseUrl ? 'PASS' : 'SKIPPED',
   replayProtection: 'PASS',
-  invalidSignature: 'PASS'
+  invalidSignature: 'PASS',
+  enrollmentKeyReplacement: 'PASS',
+  leaseRecovery: 'PASS'
 }, null, 2));
