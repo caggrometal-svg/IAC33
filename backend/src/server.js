@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { Pool } from 'pg';
 import { allowedTransitions, validCommand } from './command-core.js';
 import { generateWithFreePool } from './ai-router.js';
+import { sanitizeAssistantText, classifyIntent } from './ai-output.js';
 import { validateGptCommand, commandDigest } from './gpt-command-bridge.js';
 import { verifyGitHubActionsToken } from './github-oidc.js';
 import { fetchLatestSeismic } from './seismic.js';
@@ -287,28 +288,50 @@ const server = http.createServer(async (req, res) => {
       if (!aiAllowed(req)) return send(res, 429, { ok: false, error: 'AI_RATE_LIMITED' });
       if (aiInflight >= MAX_AI_INFLIGHT) return send(res, 503, { ok: false, error: 'AI_BUSY' });
       aiInflight += 1;
+      const controller = new AbortController();
+      const abortRequest = () => {
+        if (!res.writableEnded) controller.abort();
+      };
+      req.on('aborted', abortRequest);
+      req.on('close', abortRequest);
       try {
         const input = await body(req);
-        if (!Array.isArray(input.messages) || !input.messages.length || input.messages.length > MAX_AI_MESSAGES || input.messages.some((m) => !m || !['system', 'user', 'assistant'].includes(m.role) || typeof m.content !== 'string' || !m.content.trim() || m.content.length > MAX_AI_MESSAGE_CHARS)) return send(res, 400, { ok: false, error: 'INVALID_AI_REQUEST' });
+        if (!Array.isArray(input.messages) || !input.messages.length || input.messages.length > MAX_AI_MESSAGES || input.messages.some((m) => !m || !['system', 'user', 'assistant'].includes(m.role) || typeof m.content !== 'string' || !m.content.trim() || m.content.length > MAX_AI_MESSAGE_CHARS)) {
+          return send(res, 400, { ok: false, error: 'INVALID_AI_REQUEST' });
+        }
         const requestedTimeout = Number(input.timeoutMs || 30000);
-      const timeoutMs = Number.isFinite(requestedTimeout) ? Math.min(Math.max(requestedTimeout, AI_MIN_TIMEOUT_MS), AI_MAX_TIMEOUT_MS) : 30000;
+        const timeoutMs = Number.isFinite(requestedTimeout)
+          ? Math.min(Math.max(requestedTimeout, AI_MIN_TIMEOUT_MS), AI_MAX_TIMEOUT_MS)
+          : 30000;
         const conversation = [
           { role: 'system', content: IAC33_SYSTEM_PROMPT },
           ...input.messages.filter((message) => message.role !== 'system').slice(-32)
         ];
+        classifyIntent(conversation);
         try {
-          const result = await generateWithFreePool({ messages: conversation, timeoutMs });
+          const result = await generateWithFreePool({
+            messages: conversation,
+            timeoutMs,
+            signal: controller.signal
+          });
+          const text = sanitizeAssistantText(result.text);
+          if (!text) return send(res, 502, { ok: false, error: 'EMPTY_AI_RESPONSE' });
           return send(res, 200, {
             ok: true,
             provider: result.provider,
             model: result.model,
-            text: String(result.text).slice(0, MAX_AI_RESPONSE_CHARS)
+            text: text.slice(0, MAX_AI_RESPONSE_CHARS)
           });
         } catch (error) {
+          if (error?.name === 'AbortError' || controller.signal.aborted) throw error;
           console.error('IAC33 AI pool exhausted', error?.message || 'AI_PROVIDERS_UNAVAILABLE');
           return send(res, 503, { ok: false, error: 'AI_PROVIDERS_UNAVAILABLE' });
         }
-      } finally { aiInflight = Math.max(0, aiInflight - 1); }
+      } finally {
+        req.off('aborted', abortRequest);
+        req.off('close', abortRequest);
+        aiInflight = Math.max(0, aiInflight - 1);
+      }
     }
     if (req.method === 'GET' && path === '/v1/gpt/ota/bootstrap-status') {
       if (!(await authorizedGptBridge(req))) return send(res, 401, { ok: false, error: 'GPT_BRIDGE_UNAUTHORIZED' });
