@@ -13,10 +13,7 @@ class AiRouter(
 
     override suspend fun generate(request: AiRequest): OperationResult<AiResult> {
         if (providers.isEmpty()) {
-            return OperationResult.Failure(
-                OperationError.PROVIDER,
-                "No AI providers configured"
-            )
+            return OperationResult.Failure(OperationError.PROVIDER, "No AI providers configured")
         }
 
         var lastFailure: OperationResult.Failure? = null
@@ -27,7 +24,7 @@ class AiRouter(
                 if (error is CancellationException) throw error
                 lastFailure = OperationResult.Failure(
                     OperationError.INTERNAL,
-                    "Provider availability check failed: ${provider.id}"
+                    "Provider availability check failed"
                 )
                 false
             }
@@ -36,17 +33,12 @@ class AiRouter(
             try {
                 when (val result = provider.generate(request)) {
                     is OperationResult.Success -> {
-                        if (provider.id == "local-fallback" && lastFailure != null) {
-                            val value = result.value
-                            return OperationResult.Success(
-                                value.copy(
-                                    text = "Respaldo local activado tras fallo remoto: " +
-                                        lastFailure!!.error + " · " + lastFailure!!.message + "\n\n" +
-                                        value.text.orEmpty()
-                                )
-                            )
-                        }
-                        return result
+                        val value = result.value
+                        // Provider/diagnostic metadata is transport data, never
+                        // part of the assistant's visible answer.
+                        return OperationResult.Success(
+                            value.copy(text = cleanAssistantText(value.text))
+                        )
                     }
                     is OperationResult.Failure -> lastFailure = result
                 }
@@ -54,7 +46,7 @@ class AiRouter(
                 if (error is CancellationException) throw error
                 lastFailure = OperationResult.Failure(
                     OperationError.INTERNAL,
-                    "Provider execution failed: ${provider.id}"
+                    "Provider execution failed"
                 )
             }
         }
@@ -63,5 +55,25 @@ class AiRouter(
             OperationError.PROVIDER,
             "No AI provider available"
         )
+    }
+
+    private fun cleanAssistantText(raw: String?): String {
+        val lines = raw.orEmpty()
+            .trim()
+            .lines()
+            .filterNot { line ->
+                val normalized = line.trim().lowercase()
+                normalized.startsWith("system:") ||
+                    normalized.startsWith("user:") ||
+                    normalized.startsWith("assistant:") ||
+                    normalized.startsWith("provider ·") ||
+                    normalized.startsWith("provider:") ||
+                    normalized.startsWith("http 503") ||
+                    normalized.startsWith("http 429") ||
+                    normalized.startsWith("ai_providers_unavailable") ||
+                    normalized.startsWith("modo local activo") ||
+                    normalized.startsWith("respaldo local activado")
+            }
+        return lines.joinToString("\n").trim()
     }
 }
