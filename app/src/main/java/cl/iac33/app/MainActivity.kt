@@ -88,9 +88,9 @@ private val sectionGlyphs = listOf("AI", "EQ", "C33", "MED", "•••")
 class MainActivity : ComponentActivity() {
     private val locationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-            if (grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-                grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-            ) recreate()
+            // ON_RESUME refreshes the position after the permission dialog.
+            // Avoid Activity recreation, which can blank/restart the Compose surface.
+            Unit
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -437,33 +437,38 @@ private fun C33Panel(chatCount: Int) {
 @Composable
 private fun RedPanel(connectivityStatus: ConnectivityStatus) {
     val scope = rememberCoroutineScope()
-    var probe by remember { mutableStateOf<String?>(null) }
+    var diagnostics by remember { mutableStateOf<List<String>>(emptyList()) }
     var busy by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize()) {
         Text("Red", style = MaterialTheme.typography.headlineSmall)
-        Text("Conectividad del dispositivo y backend.", style = MaterialTheme.typography.bodySmall)
+        Text("Diagnóstico por servicio: dispositivo, backend, mapas y sismicidad.", style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.height(10.dp))
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp)) {
-                Text("Estado", style = MaterialTheme.typography.titleMedium)
+                Text("Conectividad del dispositivo", style = MaterialTheme.typography.titleMedium)
                 Text(connectivityStatus.name)
                 Spacer(Modifier.height(8.dp))
                 Button(
                     onClick = {
                         busy = true
                         scope.launch(Dispatchers.IO) {
-                            val value = runCatching { probeBackend(BuildConfig.IAC33_BACKEND_URL) }
-                                .getOrElse { "Error de red: " + (it.message ?: "desconocido") }
-                            probe = value
+                            val results = listOf(
+                                "Backend" to BuildConfig.IAC33_BACKEND_URL.trimEnd('/') + "/health",
+                                "Mapas OSM" to "https://tile.openstreetmap.org/5/10/12.png",
+                                "USGS" to "https://earthquake.usgs.gov/"
+                            ).map { (label, url) ->
+                                label + ": " + probeHttp(url)
+                            }
+                            diagnostics = results
                             busy = false
                         }
                     },
                     enabled = !busy
-                ) { Text(if (busy) "Comprobando…" else "Probar backend") }
-                probe?.let {
-                    Spacer(Modifier.height(6.dp))
-                    Text(it, style = MaterialTheme.typography.bodySmall)
+                ) { Text(if (busy) "Comprobando…" else "Diagnóstico completo") }
+                if (diagnostics.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    diagnostics.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
                 }
             }
         }
@@ -795,20 +800,22 @@ private fun SettingSwitch(
     }
 }
 
-private fun probeBackend(baseUrl: String): String {
-    val connection = (URL(baseUrl.trimEnd('/') + "/health").openConnection() as HttpURLConnection).apply {
+private fun probeBackend(baseUrl: String): String = probeHttp(baseUrl.trimEnd('/') + "/health")
+
+private fun probeHttp(url: String): String {
+    val connection = (URL(url).openConnection() as HttpURLConnection).apply {
         requestMethod = "GET"
         connectTimeout = 6_000
         readTimeout = 6_000
-        setRequestProperty("Accept", "application/json")
+        instanceFollowRedirects = true
+        setRequestProperty("Accept", "*/*")
+        setRequestProperty("User-Agent", "IAC33/2.0 Android")
     }
     return try {
         val status = connection.responseCode
-        val body = (if (status in 200..299) connection.inputStream else connection.errorStream)
-            ?.bufferedReader()
-            ?.use { it.readText() }
-            .orEmpty()
-        "HTTP " + status + " · " + body.take(180)
+        "HTTP " + status + " · " + connection.contentType.orEmpty()
+    } catch (error: Throwable) {
+        "ERROR · " + (error.message ?: error.javaClass.simpleName)
     } finally {
         connection.disconnect()
     }

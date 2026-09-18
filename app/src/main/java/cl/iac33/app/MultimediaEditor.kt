@@ -15,18 +15,22 @@ import android.media.MediaMuxer
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Environment
+import android.widget.MediaController
 import android.widget.VideoView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -40,6 +44,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
@@ -154,15 +159,41 @@ fun MultimediaPanel() {
                     enabled = !busy
                 ) { Text(if (busy) "Guardando…" else "Guardar y compartir") }
             } else if (selected.mime.startsWith("video/")) {
-                AndroidView(
-                    modifier = Modifier.fillMaxWidth().height(300.dp),
-                    factory = { ctx ->
-                        VideoView(ctx).apply {
-                            setVideoURI(selected.uri)
-                            setOnPreparedListener { player -> player.isLooping = true; player.start() }
+                var videoReady by remember(selected.uri) { mutableStateOf(false) }
+                var videoError by remember(selected.uri) { mutableStateOf<String?>(null) }
+                Box(Modifier.fillMaxWidth().height(300.dp)) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = { ctx ->
+                            VideoView(ctx).apply {
+                                setBackgroundColor(android.graphics.Color.BLACK)
+                                setMediaController(MediaController(ctx))
+                                setVideoURI(selected.uri)
+                                setOnPreparedListener { player ->
+                                    videoReady = true
+                                    videoError = null
+                                    player.isLooping = true
+                                    player.start()
+                                }
+                                setOnErrorListener { _, what, extra ->
+                                    videoReady = false
+                                    videoError = "No se pudo reproducir el vídeo (error $what/$extra)"
+                                    true
+                                }
+                            }
                         }
+                    )
+                    if (!videoReady && videoError == null) {
+                        CircularProgressIndicator(Modifier.align(Alignment.Center))
                     }
-                )
+                    videoError?.let {
+                        Text(
+                            it,
+                            modifier = Modifier.align(Alignment.Center).padding(12.dp),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
                 Text("Inicio: " + formatDuration((startSeconds * 1000f).toLong()))
                 Slider(
@@ -206,6 +237,22 @@ fun MultimediaPanel() {
 
         Spacer(Modifier.height(12.dp))
         Text("Los archivos se procesan localmente dentro de IAC33.")
+    }
+}
+
+private fun decodeBitmapForPreview(context: Context, uri: Uri): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+    var sample = 1
+    while (bounds.outWidth / sample > 1600 || bounds.outHeight / sample > 1600) sample *= 2
+    val options = BitmapFactory.Options().apply {
+        inSampleSize = sample
+        inPreferredConfig = Bitmap.Config.ARGB_8888
+    }
+    return context.contentResolver.openInputStream(uri)?.use {
+        BitmapFactory.decodeStream(it, null, options)
     }
 }
 
@@ -273,11 +320,17 @@ private fun trimVideo(context: Context, uri: Uri, startMs: Long, endMs: Long): F
             check(tracks.isNotEmpty()) { "El vídeo no contiene pistas compatibles" }
             muxer.start()
             val info = android.media.MediaCodec.BufferInfo()
-            val buffer = java.nio.ByteBuffer.allocate(1024 * 1024)
             for ((sourceTrack, muxTrack) in tracks) {
                 extractor.unselectTrack(sourceTrack)
                 extractor.selectTrack(sourceTrack)
                 extractor.seekTo(startMs * 1000L, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+                val trackFormat = extractor.getTrackFormat(sourceTrack)
+                val maxInputSize = if (trackFormat.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
+                    trackFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE).coerceAtLeast(1024 * 1024)
+                } else {
+                    8 * 1024 * 1024
+                }
+                val buffer = java.nio.ByteBuffer.allocate(maxInputSize)
                 while (true) {
                     val size = extractor.readSampleData(buffer, 0)
                     val time = extractor.sampleTime
