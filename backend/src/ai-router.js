@@ -582,8 +582,9 @@ export async function generateWithFreePool({ messages, timeoutMs = 18000, signal
       throw lastError || providerError(504, 'Provider timeout');
     }
 
-    const batchSize = Math.min(2, available.length);
-    for (let offset = 0; offset < available.length; offset += batchSize) {
+    for (let offset = 0; offset < available.length;) {
+      const first = available[offset];
+      const batchSize = SERIAL_PREFERRED_PROVIDERS.has(first) ? 1 : Math.min(2, available.length - offset);
       const batch = available.slice(offset, offset + batchSize);
       const pending = batch.map((id) => {
         const started = Date.now();
@@ -622,6 +623,7 @@ export async function generateWithFreePool({ messages, timeoutMs = 18000, signal
           return { ...settled.result, text: sanitized, provider: settled.id };
         }
       }
+      offset += batchSize;
     }
 
     const error = new Error('AI_PROVIDERS_UNAVAILABLE');
