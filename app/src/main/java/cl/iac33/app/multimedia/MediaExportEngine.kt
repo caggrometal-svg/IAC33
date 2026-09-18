@@ -192,33 +192,33 @@ class MediaExportEngine(private val context: Context) {
 
     private fun buildVideoEffects(request: ExportRequest): List<Effect> {
         val effects = mutableListOf<Effect>()
-        if (request.brightness != 0f) effects += Brightness(request.brightness.coerceIn(-1f, 1f))
-        if (request.contrast != 0f) effects += Contrast(request.contrast.coerceIn(-1f, 1f))
+        if (request.brightness != 0f) effects.add Brightness(request.brightness.coerceIn(-1f, 1f))
+        if (request.contrast != 0f) effects.add Contrast(request.contrast.coerceIn(-1f, 1f))
         if (request.saturation != 1f) {
-            effects += HslAdjustment.Builder()
+            effects.add HslAdjustment.Builder()
                 .adjustSaturation(((request.saturation - 1f) * 100f).coerceIn(-100f, 100f))
                 .build()
         }
         when (request.filter) {
-            MediaFilter.BW -> effects += RgbFilter.createGrayscaleFilter()
-            MediaFilter.SEPIA -> effects += RgbMatrix { _, _ -> sepiaMatrix() }
-            MediaFilter.VINTAGE -> effects += RgbMatrix { _, _ -> vintageMatrix() }
-            MediaFilter.CYBERPUNK -> effects += RgbMatrix { _, _ -> cyberpunkMatrix() }
+            MediaFilter.BW -> effects.add RgbFilter.createGrayscaleFilter()
+            MediaFilter.SEPIA -> effects.add RgbMatrix { _, _ -> sepiaMatrix() }
+            MediaFilter.VINTAGE -> effects.add RgbMatrix { _, _ -> vintageMatrix() }
+            MediaFilter.CYBERPUNK -> effects.add RgbMatrix { _, _ -> cyberpunkMatrix() }
             MediaFilter.NONE -> Unit
         }
         val (width, height) = readVideoSize(request.input)
         when (request.aspect) {
             AspectRatio.ORIGINAL -> Unit
-            AspectRatio.PORTRAIT -> effects += centerCropForRatio(width, height, 9f / 16f)
-            AspectRatio.LANDSCAPE -> effects += centerCropForRatio(width, height, 16f / 9f)
-            AspectRatio.SQUARE -> effects += centerCropForRatio(width, height, 1f)
+            AspectRatio.PORTRAIT -> effects.add centerCropForRatio(width, height, 9f / 16f)
+            AspectRatio.LANDSCAPE -> effects.add centerCropForRatio(width, height, 16f / 9f)
+            AspectRatio.SQUARE -> effects.add centerCropForRatio(width, height, 1f)
         }
         request.textOverlay?.takeIf { it.text.isNotBlank() }?.let {
             val styled = android.text.SpannableString(it.text).apply {
                 setSpan(android.text.style.AbsoluteSizeSpan(it.fontSizeSp, true), 0, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 setSpan(android.text.style.ForegroundColorSpan(android.graphics.Color.WHITE), 0, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
-            effects += TextOverlay.createStaticTextOverlay(styled)
+            effects.add TextOverlay.createStaticTextOverlay(styled)
         }
         return effects
     }
