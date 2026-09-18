@@ -33,10 +33,7 @@ class PendingOtaStore(context: Context) {
         val releaseId = prefs.getString("releaseId", null) ?: return null
         val appVersion = prefs.getString("appVersion", null) ?: return null
         val expiresAtMs = prefs.getLong("expiresAtMs", 0L)
-        if (expiresAtMs <= System.currentTimeMillis()) {
-            clear()
-            return null
-        }
+        if (expiresAtMs <= 0L) return null
         return Pending(commandId, idempotencyKey, releaseId, appVersion, expiresAtMs)
     }
 
