@@ -219,7 +219,7 @@ async function callCloudflare(messages, timeoutMs, account, model, parentSignal)
 async function callAndrew2(messages, timeoutMs, parentSignal) {
   const { signal, cleanup } = timeoutSignal(parentSignal, timeoutMs);
   try {
-    const base = String(process.env.IAC33_ANDREW2_API_URL || 'https://andrew2-api.onrender.com').replace(/\\/$/, '');
+    const base = String(process.env.IAC33_ANDREW2_API_URL || 'https://andrew2-api.onrender.com').replace(/\/$/, '');
     const parsed = new URL(base);
     if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== 'andrew2-api.onrender.com') {
       throw providerError(503, 'Andrew2 endpoint not trusted');
