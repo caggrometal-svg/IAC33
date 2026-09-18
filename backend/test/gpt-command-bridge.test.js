@@ -58,3 +58,41 @@ test('GPT bridge rejects OTA manifests outside trusted artifact hosts', () => as
     rollbackRef: 'release-1'
   }}
 }), false));
+
+test('GPT bridge rejects OTA when appVersion is below minimumSupportedVersion', () => assert.equal(validateGptCommand({
+  ...base(),
+  type: 'OTA_INSTALL',
+  payload: { manifest: {
+    schemaVersion: 1,
+    releaseId: 'release-invalid-version',
+    appVersion: '0.1.0',
+    createdAt: new Date().toISOString(),
+    minimumSupportedVersion: '0.1.1',
+    artifactRef: 'https://github.com/caggrometal-svg/IAC33/releases/download/release-invalid-version/iac33.apk',
+    artifactSha256: 'a'.repeat(64),
+    artifactSize: 1024,
+    algorithm: 'SHA256withECDSA',
+    signatureBase64: 'c2ln',
+    keyId: 'iac33-bridge-ecdsa-v1',
+    rollbackRef: 'release-previous'
+  }}
+}), false));
+
+test('GPT bridge rejects oversized OTA signatures', () => assert.equal(validateGptCommand({
+  ...base(),
+  type: 'OTA_INSTALL',
+  payload: { manifest: {
+    schemaVersion: 1,
+    releaseId: 'release-large-signature',
+    appVersion: '0.1.2',
+    createdAt: new Date().toISOString(),
+    minimumSupportedVersion: '0.1.0',
+    artifactRef: 'https://github.com/caggrometal-svg/IAC33/releases/download/release-large-signature/iac33.apk',
+    artifactSha256: 'a'.repeat(64),
+    artifactSize: 1024,
+    algorithm: 'SHA256withECDSA',
+    signatureBase64: 'a'.repeat(513),
+    keyId: 'iac33-bridge-ecdsa-v1',
+    rollbackRef: 'release-previous'
+  }}
+}), false));
