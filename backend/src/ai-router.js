@@ -2,6 +2,7 @@ import { STOP_SEQUENCES, sanitizeAssistantText } from './ai-output.js';
 
 const providers = {
   andrew2: { key: null, async call(messages, timeoutMs, _attempt, signal) { return callAndrew2(messages, timeoutMs, signal); } },
+  openai: { key: 'OPENAI_API_KEY', async call(messages, timeoutMs, _attempt, signal) { return callOpenAiCompatible('https://api.openai.com/v1/chat/completions', process.env.OPENAI_API_KEY, process.env.OPENAI_MODEL || 'gpt-4o-mini', messages, timeoutMs, signal); } },
   anthropic: { key: 'ANTHROPIC_API_KEY', async call(messages, timeoutMs, _attempt, signal) { return callAnthropic(messages, timeoutMs, signal); } },
   deepseek: { key: 'DEEPSEEK_API_KEY', async call(messages, timeoutMs, _attempt, signal) { return callOpenAiCompatible('https://api.deepseek.com/chat/completions', process.env.DEEPSEEK_API_KEY, process.env.DEEPSEEK_MODEL || 'deepseek-chat', messages, timeoutMs, signal); } },
   xai: { key: 'XAI_API_KEY', async call(messages, timeoutMs, _attempt, signal) { return callOpenAiCompatible('https://api.x.ai/v1/chat/completions', process.env.XAI_API_KEY, process.env.XAI_MODEL || 'grok-3-mini', messages, timeoutMs, signal); } },
