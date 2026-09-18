@@ -86,6 +86,7 @@ import java.net.URL
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 private enum class StudioMode { EDITOR, AI }
 private enum class StudioMediaKind { IMAGE, VIDEO, AUDIO }
@@ -613,6 +614,7 @@ private fun centerCropForRatio(width: Int, height: Int, targetRatio: Float): Cro
     }
 }
 
+@Composable
 private fun LabeledSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, onValue: (Float) -> Unit) {
     Text("\$label: \${String.format("%.2f", value)}")
     Slider(value = value, onValueChange = onValue, valueRange = range)
