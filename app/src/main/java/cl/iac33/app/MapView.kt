@@ -51,6 +51,7 @@ fun IAC33Map(
                 tag = html
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
+                settings.userAgentString = settings.userAgentString + " IAC33/2.0"
                 settings.cacheMode = WebSettings.LOAD_DEFAULT
                 settings.setSupportZoom(true)
                 settings.builtInZoomControls = true
