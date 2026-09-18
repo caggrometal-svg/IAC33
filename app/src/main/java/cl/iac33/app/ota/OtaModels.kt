@@ -1,5 +1,8 @@
 package cl.iac33.app.ota
 
+const val OTA_ALGORITHM = "SHA256withECDSA"
+const val OTA_KEY_ID = "iac33-bridge-ecdsa-v1"
+
 data class OtaManifest(
     val schemaVersion: Int,
     val releaseId: String,
@@ -23,9 +26,9 @@ data class OtaManifest(
             artifactRef.isNotBlank() &&
             artifactSha256.matches(Regex("[0-9a-fA-F]{64}")) &&
             artifactSize > 0L &&
-            algorithm == "SHA256withECDSA" &&
+            algorithm == OTA_ALGORITHM &&
             signatureBase64.isNotBlank() &&
-            keyId.isNotBlank() &&
+            keyId == OTA_KEY_ID &&
             rollbackRef.isNotBlank()
 }
 
