@@ -1,6 +1,7 @@
 const providers = {
   horde: { key: null, async call(messages, timeoutMs) { return callAiHorde(messages, timeoutMs); } },
   pollinations: { key: null, async call(messages, timeoutMs) { return callPollinations(messages, timeoutMs); } },
+  kilo: { key: null, async call(messages, timeoutMs) { return callKilo(messages, timeoutMs); } },
   openrouter: { key: 'OPENROUTER_API_KEY', async call(messages, timeoutMs) { return callOpenAiCompatible('https://openrouter.ai/api/v1/chat/completions', process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_MODEL || 'openrouter/free', messages, timeoutMs); } },
   groq: { key: 'GROQ_API_KEY', async call(messages, timeoutMs) { return callOpenAiCompatible('https://api.groq.com/openai/v1/chat/completions', process.env.GROQ_API_KEY, process.env.GROQ_MODEL || 'openai/gpt-oss-120b', messages, timeoutMs); } },
   gemini: { key: 'GEMINI_API_KEY', async call(messages, timeoutMs) { const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite'; return callGemini(messages, timeoutMs, model); } },
@@ -32,6 +33,24 @@ async function callCloudflare(messages, timeoutMs, account, model) {
     const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(account)}/ai/run/${encodeURIComponent(model)}`, { method: 'POST', headers: { authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ messages }), signal: controller.signal });
     const json = await readJsonBounded(response).catch(() => ({})); if (!response.ok) throw providerError(response.status, json?.errors?.[0]?.message || 'Cloudflare request failed');
     const text = json?.result?.response || json?.result?.text || ''; if (!text) throw providerError(502, 'Cloudflare returned empty response'); return { text, model };
+  } finally { clearTimeout(timer); }
+}
+async function callKilo(messages, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const model = process.env.KILO_MODEL || 'kilo-auto/free';
+  try {
+    const response = await fetch('https://api.kilo.ai/api/gateway/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model, messages, stream: false, max_tokens: Math.min(Number(process.env.KILO_MAX_TOKENS || 512), 1024) }),
+      signal: controller.signal
+    });
+    const json = await readJsonBounded(response).catch(() => ({}));
+    if (!response.ok) throw providerError(response.status || 502, json?.error?.message || 'Kilo request failed');
+    const text = json?.choices?.[0]?.message?.content || '';
+    if (!text) throw providerError(502, 'Kilo returned empty response');
+    return { text, model: json?.model || model };
   } finally { clearTimeout(timer); }
 }
 async function callPollinations(messages, timeoutMs) {
@@ -102,7 +121,7 @@ async function callOpenAiCompatible(url, key, model, messages, timeoutMs) {
   } finally { clearTimeout(timer); }
 }
 export async function generateWithFreePool({ messages, timeoutMs = 18000 }) {
-  const configuredOrder = (process.env.AI_PROVIDER_ORDER || 'pollinations,horde,openrouter,gemini,cloudflare,groq,freeinference,animica').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
+  const configuredOrder = (process.env.AI_PROVIDER_ORDER || 'kilo,pollinations,horde,openrouter,gemini,cloudflare,groq,freeinference,animica').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
   const order = [...new Set(configuredOrder)]; const diagnostics = [];
   const totalBudgetMs = Math.min(Math.max(Number(process.env.AI_TOTAL_TIMEOUT_MS || 9000), 1000), 120000);
   const deadline = Date.now() + totalBudgetMs;
@@ -110,7 +129,7 @@ export async function generateWithFreePool({ messages, timeoutMs = 18000 }) {
     const provider = providers[id]; if (!provider || (provider.key && !process.env[provider.key])) { diagnostics.push({ provider: id, state: 'NOT_CONFIGURED' }); continue; }
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) { diagnostics.push({ provider: id, state: 'BUDGET_EXHAUSTED' }); break; }
-    const providerTimeoutMs = id === 'horde' ? Math.min(Math.max(Number(process.env.AI_HORDE_TIMEOUT_MS || 6000), 3000), 10000) : id === 'pollinations' ? Math.min(Math.max(Number(process.env.AI_POLLINATIONS_TIMEOUT_MS || 3000), 1500), 8000) : Math.min(Math.max(Number(process.env.AI_PROVIDER_TIMEOUT_MS || 2500), 1000), 10000);
+    const providerTimeoutMs = id === 'kilo' ? Math.min(Math.max(Number(process.env.AI_KILO_TIMEOUT_MS || 3000), 1500), 8000) : id === 'horde' ? Math.min(Math.max(Number(process.env.AI_HORDE_TIMEOUT_MS || 6000), 3000), 10000) : id === 'pollinations' ? Math.min(Math.max(Number(process.env.AI_POLLINATIONS_TIMEOUT_MS || 3000), 1500), 8000) : Math.min(Math.max(Number(process.env.AI_PROVIDER_TIMEOUT_MS || 2500), 1000), 10000);
     const attemptTimeoutMs = Math.min(timeoutMs, providerTimeoutMs, remainingMs);
     const started = Date.now();
     try { const result = await provider.call(messages, attemptTimeoutMs); diagnostics.push({ provider: id, state: 'RESPONDING', latencyMs: Date.now() - started }); return { ...result, provider: id, diagnostics }; }
