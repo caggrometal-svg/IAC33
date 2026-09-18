@@ -56,7 +56,7 @@ apt-get install -y --no-install-recommends caddy
 
 cat >/etc/caddy/Caddyfile <<EOF
 https://${PUBLIC_HOST} {
-    @authorized header Authorization "Bearer ${API_KEY}"
+    @authorized header X-IAC33-LLM-Key "${API_KEY}"
     handle @authorized {
         reverse_proxy 127.0.0.1:11434
     }
@@ -80,12 +80,21 @@ curl -fsS --max-time 10 http://127.0.0.1:11434/api/tags >/dev/null
 cat >/tmp/iac33-smoke.json <<JSON
 {"model":"$MODEL","messages":[{"role":"user","content":"ping"}],"stream":false}
 JSON
-curl -fsS --max-time 60 \
-  -H "X-IAC33-LLM-Key: $API_KEY" \
-  -H "content-type: application/json" \
-  --data-binary @/tmp/iac33-smoke.json \
-  "https://$PUBLIC_HOST/v1/chat/completions" \
-  | grep -q '"choices"'
+for attempt in $(seq 1 30); do
+  smoke="$(curl -fsS --max-time 15 \
+    -H "X-IAC33-LLM-Key: $API_KEY" \
+    -H "content-type: application/json" \
+    --data-binary @/tmp/iac33-smoke.json \
+    "https://$PUBLIC_HOST/v1/chat/completions" 2>/dev/null || true)"
+  if jq -e '.choices[0].message.content // empty' <<<"$smoke" >/dev/null 2>&1; then
+    break
+  fi
+  if [[ "$attempt" == "30" ]]; then
+    echo "ERROR: HTTPS inference smoke test did not pass."
+    exit 1
+  fi
+  sleep 5
+done
 rm -f /tmp/iac33-smoke.json
 
 cat >/etc/iac33-llm.env <<EOF
