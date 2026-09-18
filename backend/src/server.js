@@ -185,7 +185,7 @@ async function claimNextCommand(actor = 'worker', deviceId = null) {
       await client.query('INSERT INTO command_audit(command_id,from_status,to_status,actor,detail) VALUES($1,$2,$3,$4,$5)', [row.id, row.status, 'EXPIRED', 'system:expiry', { automatic: true }]);
     }
 
-    const stale = await client.query("SELECT id,status FROM commands WHERE status IN ('CLAIMED','EXECUTING') AND expires_at > now() AND claimed_at IS NOT NULL AND claimed_at <= now() - ($1 * interval '1 millisecond') FOR UPDATE SKIP LOCKED", [COMMAND_LEASE_MS]);
+    const stale = await client.query("SELECT id,status FROM commands WHERE status='CLAIMED' AND expires_at > now() AND claimed_at IS NOT NULL AND claimed_at <= now() - ($1 * interval '1 millisecond') FOR UPDATE SKIP LOCKED", [COMMAND_LEASE_MS]);
     for (const row of stale.rows) {
       await client.query("UPDATE commands SET status='PENDING', claimed_by=NULL, claimed_at=NULL, updated_at=now() WHERE id=$1", [row.id]);
       await client.query('INSERT INTO command_audit(command_id,from_status,to_status,actor,detail) VALUES($1,$2,$3,$4,$5)', [row.id, row.status, 'PENDING', 'system:lease-recovery', { automatic: true, leaseMs: COMMAND_LEASE_MS }]);
