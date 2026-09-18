@@ -17,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -52,7 +53,28 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme {
+            val iac33DarkColors = darkColorScheme(
+                primary = Color(0xFF7DD3FC),
+                onPrimary = Color(0xFF00202A),
+                primaryContainer = Color(0xFF123B46),
+                onPrimaryContainer = Color(0xFFB8ECFF),
+                secondary = Color(0xFFB9C7FF),
+                onSecondary = Color(0xFF18254A),
+                secondaryContainer = Color(0xFF29345D),
+                onSecondaryContainer = Color(0xFFDCE1FF),
+                tertiary = Color(0xFF9FE6D2),
+                onTertiary = Color(0xFF00382F),
+                tertiaryContainer = Color(0xFF155348),
+                onTertiaryContainer = Color(0xFFBAF2E3),
+                background = Color(0xFF080B10),
+                onBackground = Color(0xFFE7EAF0),
+                surface = Color(0xFF0D1118),
+                onSurface = Color(0xFFE7EAF0),
+                surfaceVariant = Color(0xFF171D27),
+                onSurfaceVariant = Color(0xFFB8C0CC),
+                outline = Color(0xFF3A4352)
+            )
+            MaterialTheme(colorScheme = iac33DarkColors) {
                 var selected by rememberSaveable { mutableIntStateOf(0) }
                 var connectivityStatus by remember { mutableStateOf(ConnectivityStatus.OFFLINE) }
                 var location by remember { mutableStateOf<LocationSnapshot?>(null) }
@@ -207,7 +229,7 @@ private fun AiPanel() {
 private fun DashboardPanel(section: String, connectivityStatus: ConnectivityStatus) {
     Text(section, style = MaterialTheme.typography.headlineMedium)
     Spacer(Modifier.height(12.dp))
-    Card(Modifier.fillMaxWidth()) {
+    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.padding(16.dp)) {
             Text("IAC33 · $section", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(8.dp))
