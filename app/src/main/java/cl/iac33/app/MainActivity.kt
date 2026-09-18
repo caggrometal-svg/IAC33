@@ -302,13 +302,7 @@ private fun AiPanel(
                         }
                     }
                     is OperationResult.Failure -> {
-                        val detail = when (result.error) {
-                            OperationError.RATE_LIMIT -> "El proveedor remoto está limitado."
-                            OperationError.NETWORK -> "No hay conexión con el backend."
-                            OperationError.TIMEOUT -> "El proveedor tardó demasiado."
-                            else -> result.message
-                        }
-                        onLinesChange(updated + ChatLine("assistant", cleanVisibleAiText(detail)))
+                        onLinesChange(updated + ChatLine("assistant", "No se pudo obtener una respuesta."))
                     }
                 }
             } catch (error: TimeoutCancellationException) {
