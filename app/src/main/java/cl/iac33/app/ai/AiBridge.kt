@@ -11,16 +11,13 @@ import cl.iac33.app.core.connectivity.ConnectivityStatus
 /** Stable connectivity boundary between IAC33 and the AI provider router. */
 class AiBridge(
     context: Context,
-    backendUrl: String
+    backendUrl: String,
+    private val localFirst: Boolean = false
 ) : AiEngine {
     private val connectivity = ConnectivityMonitor(context)
     private val local = LocalFallbackProvider()
-    private val router = AiRouter(
-        listOf(
-            RemoteBackendProvider(backendUrl),
-            local
-        )
-    )
+    private val remote = RemoteBackendProvider(backendUrl)
+    private val router = AiRouter(if (localFirst) listOf(local, remote) else listOf(remote, local))
 
     override suspend fun generate(request: AiRequest): OperationResult<AiResult> {
         return when (connectivity.status()) {

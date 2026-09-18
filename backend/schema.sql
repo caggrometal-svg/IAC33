@@ -24,6 +24,23 @@ CREATE TABLE IF NOT EXISTS commands (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE commands ADD COLUMN IF NOT EXISTS type TEXT;
+ALTER TABLE commands ADD COLUMN IF NOT EXISTS payload JSONB;
+ALTER TABLE commands ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+ALTER TABLE commands ADD COLUMN IF NOT EXISTS status TEXT;
+ALTER TABLE commands ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+ALTER TABLE commands ADD COLUMN IF NOT EXISTS target_device_id TEXT;
+ALTER TABLE commands ADD COLUMN IF NOT EXISTS claimed_by TEXT;
+ALTER TABLE commands ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
+ALTER TABLE commands ADD COLUMN IF NOT EXISTS executed_at TIMESTAMPTZ;
+ALTER TABLE commands ADD COLUMN IF NOT EXISTS result JSONB;
+ALTER TABLE commands ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now();
+ALTER TABLE commands ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
+UPDATE commands
+SET idempotency_key = 'legacy-' || id
+WHERE idempotency_key IS NULL;
+ALTER TABLE commands ALTER COLUMN idempotency_key SET NOT NULL;
+
 CREATE INDEX IF NOT EXISTS commands_pending_idx ON commands(status, created_at);
 CREATE INDEX IF NOT EXISTS commands_expiry_idx ON commands(expires_at);
 CREATE INDEX IF NOT EXISTS commands_target_device_idx ON commands(target_device_id, status, created_at);
