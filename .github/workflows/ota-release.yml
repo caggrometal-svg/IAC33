@@ -345,15 +345,34 @@ jobs:
           }
 
           get_oidc_token() {
-            curl --fail-with-body --silent --show-error               -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$OIDC_AUDIENCE" | jq -er '.value'
+            local status
+            status="$(curl --silent --show-error --output "$RUNNER_TEMP/oidc-response.json" --write-out '%{http_code}'               -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$OIDC_AUDIENCE" || true)"
+            if [ "$status" != "200" ]; then
+              echo "GitHub OIDC token request failed HTTP $status." >&2
+              jq -c 'del(.value)' "$RUNNER_TEMP/oidc-response.json" 2>/dev/null || true
+              return 1
+            fi
+            jq -er '.value' "$RUNNER_TEMP/oidc-response.json"
+          }
+
+          get_bootstrap_status() {
+            local status
+            status="$(curl --silent --show-error --output "$RUNNER_TEMP/bootstrap-response.json" --write-out '%{http_code}'               -H "Authorization: Bearer $OIDC_TOKEN"               "$BACKEND_URL/v1/gpt/ota/bootstrap-status?requiredVersion=$IAC33_OTA_BOOTSTRAP_VERSION" || true)"
+            if [ "$status" != "200" ]; then
+              echo "OTA bootstrap-status request failed HTTP $status." >&2
+              cat "$RUNNER_TEMP/bootstrap-response.json" 2>/dev/null || true
+              return 1
+            fi
+            jq -er '.confirmed' "$RUNNER_TEMP/bootstrap-response.json"
           }
 
           wait_for_ready
+          echo "Requesting GitHub Actions OIDC token..."
           OIDC_TOKEN="$(get_oidc_token)"
           test -n "$OIDC_TOKEN"
 
           if [ -n "$IAC33_OTA_BOOTSTRAP_VERSION" ]; then
-            BOOTSTRAP_STATUS="$(curl --fail-with-body --silent --show-error               -H "Authorization: Bearer $OIDC_TOKEN"               "$BACKEND_URL/v1/gpt/ota/bootstrap-status?requiredVersion=$IAC33_OTA_BOOTSTRAP_VERSION" | jq -er '.confirmed')"
+            BOOTSTRAP_STATUS="$(get_bootstrap_status)"
             if [ "$BOOTSTRAP_STATUS" != "true" ]; then
               echo "OTA bootstrap not yet confirmed on an installed device."
               exit 0
