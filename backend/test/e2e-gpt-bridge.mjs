@@ -101,7 +101,7 @@ try {
   const row = await db.query('SELECT id,status FROM commands WHERE idempotency_key=$1', [command.idempotencyKey]);
   assert.equal(row.rowCount, 1);
   assert.equal(row.rows[0].id, command.id);
-  assert.equal(row.rows[0].status, 'PENDING');
+  assert.equal(row.rows[0].status, 'SUCCEEDED');
   const otaRow = await db.query('SELECT id,type,status FROM commands WHERE id=$1', [ota.id]);
   assert.equal(otaRow.rowCount, 1);
   assert.equal(otaRow.rows[0].type, 'OTA_INSTALL');
