@@ -116,8 +116,25 @@ async function createCommand(input, actor = 'api') {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const existing = await client.query('SELECT id,status FROM commands WHERE idempotency_key=$1 FOR UPDATE', [input.idempotencyKey]);
-    if (existing.rowCount) { await client.query('COMMIT'); return existing.rows[0]; }
+    const existing = await client.query('SELECT id,type,payload,expires_at,target_device_id,status FROM commands WHERE idempotency_key=$1 FOR UPDATE', [input.idempotencyKey]);
+    if (existing.rowCount) {
+      const row = existing.rows[0];
+      const existingInput = {
+        id: row.id,
+        type: row.type,
+        payload: row.payload,
+        expiresAt: new Date(row.expires_at).toISOString(),
+        targetDeviceId: row.target_device_id || undefined,
+      };
+      if (commandDigest(existingInput) !== commandDigest(input)) {
+        const error = new Error('IDEMPOTENCY_KEY_CONFLICT');
+        error.status = 409;
+        await client.query('ROLLBACK');
+        throw error;
+      }
+      await client.query('COMMIT');
+      return { id: row.id, status: row.status };
+    }
     const result = await client.query(`INSERT INTO commands(id,type,payload,idempotency_key,status,expires_at,target_device_id) VALUES($1,$2,$3,$4,'PENDING',$5,$6) RETURNING id,status`, [input.id, input.type, input.payload, input.idempotencyKey, new Date(input.expiresAt), input.targetDeviceId || null]);
     await client.query('INSERT INTO command_audit(command_id,to_status,actor,detail) VALUES($1,$2,$3,$4)', [input.id, 'PENDING', actor, { type: input.type, targetDeviceId: input.targetDeviceId || null }]);
     await client.query('COMMIT');
@@ -232,13 +249,19 @@ const server = http.createServer(async (req, res) => {
         return send(res, 201, { ok: true, command, digest: commandDigest(input) });
       } catch (error) {
         if (error.message === 'DATABASE_UNCONFIGURED') return send(res, 503, { ok: false, error: 'DATABASE_UNCONFIGURED' });
+        if (error.message === 'IDEMPOTENCY_KEY_CONFLICT') return send(res, 409, { ok: false, error: 'IDEMPOTENCY_KEY_CONFLICT' });
         throw error;
       }
     }
     if (req.method === 'POST' && path === '/v1/commands') {
       const input = await body(req);
       if (!validCommand(input)) return send(res, 400, { ok: false, error: 'INVALID_COMMAND' });
-      return send(res, 201, { ok: true, command: await createCommand(input) });
+      try {
+        return send(res, 201, { ok: true, command: await createCommand(input) });
+      } catch (error) {
+        if (error.message === 'IDEMPOTENCY_KEY_CONFLICT') return send(res, 409, { ok: false, error: 'IDEMPOTENCY_KEY_CONFLICT' });
+        throw error;
+      }
     }
     if (req.method === 'POST' && path === '/v1/commands/claim-next') {
       const input = await body(req);
