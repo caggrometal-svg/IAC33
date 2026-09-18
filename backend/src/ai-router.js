@@ -161,12 +161,10 @@ export async function generateWithFreePool({ messages, timeoutMs = 18000 }) {
 
   const pending = attempts.map((promise) => ({ promise }));
   while (pending.length) {
-    const winner = await Promise.race(pending.map((entry) => entry.promise));
-    const index = pending.findIndex((entry) => entry.promise === attempts.find((promise) => promise === entry.promise && false));
-    const entryIndex = pending.findIndex((entry) => entry.promise === pending.find((candidate) => candidate.promise === entry.promise)?.promise);
-    const settled = winner;
-    const removeIndex = pending.findIndex((entry) => entry.promise === attempts.find((promise) => promise === entry.promise));
-    pending.splice(removeIndex >= 0 ? removeIndex : 0, 1);
+    const raced = await Promise.race(pending.map(async (entry) => ({ entry, settled: await entry.promise })));
+    const removeIndex = pending.indexOf(raced.entry);
+    if (removeIndex >= 0) pending.splice(removeIndex, 1);
+    const settled = raced.settled;
     if (settled.ok) {
       diagnostics.push({ provider: settled.id, state: 'RESPONDING', latencyMs: settled.latencyMs });
       return { ...settled.result, provider: settled.id, diagnostics };
