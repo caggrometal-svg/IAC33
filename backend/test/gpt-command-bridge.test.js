@@ -15,3 +15,9 @@ test('GPT bridge exposes explicit allowlist', () => {
   assert.deepEqual([...ALLOWED_TYPES].sort(), ['OTA_INSTALL', 'device.action', 'sync', 'update'].sort());
   assert.equal(commandDigest(base()).length, 64);
 });
+
+test('GPT bridge canonical digest changes when command content changes', () => {
+  const first = base();
+  const second = { ...first, payload: { action: 'different' } };
+  assert.notEqual(commandDigest(first), commandDigest(second));
+});
