@@ -23,7 +23,7 @@ data class OtaManifest(
             artifactRef.isNotBlank() &&
             artifactSha256.matches(Regex("[0-9a-fA-F]{64}")) &&
             artifactSize > 0L &&
-            algorithm == "SHA256withECDSA" &&
+            algorithm in setOf("SHA256withECDSA", "SHA256withRSA") &&
             signatureBase64.isNotBlank() &&
             keyId.isNotBlank() &&
             rollbackRef.isNotBlank()
