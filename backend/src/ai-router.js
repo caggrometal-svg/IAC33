@@ -1,6 +1,7 @@
 import { STOP_SEQUENCES, sanitizeAssistantText } from './ai-output.js';
 
 const providers = {
+  ollama: { key: 'IAC33_OLLAMA_API_KEY', async call(messages, timeoutMs, _attempt, signal) { return callOllama(messages, timeoutMs, signal); } },
   horde: { key: null, async call(messages, timeoutMs, attempt, signal) { return callAiHorde(messages, timeoutMs, attempt, signal); } },
   pollinations: { key: null, async call(messages, timeoutMs, attempt, signal) { return callPollinations(messages, timeoutMs, attempt, signal); } },
   kilo: { key: null, async call(messages, timeoutMs, attempt, signal) { return callKilo(messages, timeoutMs, attempt, signal); } },
@@ -20,7 +21,7 @@ function providerError(status, message, retryAfterMs = 0) {
 }
 
 const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
-const FREE_PROVIDER_DEFAULTS = ['kilo', 'horde', 'pollinations'];
+const FREE_PROVIDER_DEFAULTS = ['ollama', 'kilo', 'horde', 'pollinations'];
 const PROVIDER_CIRCUIT_FAILURES = Math.min(Math.max(Number(process.env.AI_CIRCUIT_FAILURES || 2), 1), 5);
 const PROVIDER_CIRCUIT_OPEN_MS = Math.min(Math.max(Number(process.env.AI_CIRCUIT_OPEN_MS || 30000), 5000), 300000);
 const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024;
@@ -62,6 +63,7 @@ function sleep(ms, signal) {
 }
 
 function providerTimeoutMs(id) {
+  if (id === 'ollama') return Math.min(Math.max(Number(process.env.IAC33_OLLAMA_TIMEOUT_MS || 8500), 1500), 20000);
   if (id === 'kilo') return Math.min(Math.max(Number(process.env.AI_KILO_TIMEOUT_MS || 2500), 1000), 6000);
   if (id === 'horde') return Math.min(Math.max(Number(process.env.AI_HORDE_TIMEOUT_MS || 4500), 2000), 8000);
   if (id === 'pollinations') return Math.min(Math.max(Number(process.env.AI_POLLINATIONS_TIMEOUT_MS || 2500), 1000), 6000);
@@ -205,6 +207,36 @@ async function callCloudflare(messages, timeoutMs, account, model, parentSignal)
     const text = json?.choices?.[0]?.message?.content || json?.result?.response || json?.result?.text || '';
     if (!text) throw providerError(502, 'Cloudflare returned empty response');
     return { text, model };
+  } finally {
+    cleanup();
+  }
+}
+
+async function callOllama(messages, timeoutMs, parentSignal) {
+  const { signal, cleanup } = timeoutSignal(parentSignal, timeoutMs);
+  const endpoint = String(process.env.IAC33_OLLAMA_ENDPOINT || '').trim().replace(/\/$/, '');
+  const model = process.env.IAC33_OLLAMA_MODEL || 'gpt-oss:20b';
+  const apiKey = process.env.IAC33_OLLAMA_API_KEY || '';
+  if (!endpoint || !apiKey) throw providerError(503, 'Ollama server not configured');
+  let url;
+  try {
+    url = new URL(endpoint.endsWith('/v1/chat/completions') ? endpoint : endpoint + '/v1/chat/completions');
+    if (url.protocol !== 'https:') throw new Error('OLLAMA_ENDPOINT_MUST_USE_HTTPS');
+  } catch {
+    throw providerError(503, 'Ollama endpoint invalid');
+  }
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-iac33-llm-key': apiKey },
+      body: JSON.stringify({ model, messages, stream: false }),
+      signal
+    });
+    const json = await readJsonBounded(response);
+    if (!response.ok) throw responseError(response, json, 'Ollama request failed');
+    const text = sanitizeAssistantText(json?.choices?.[0]?.message?.content || '');
+    if (!text) throw providerError(502, 'Ollama returned empty response');
+    return { text, model: json?.model || model };
   } finally {
     cleanup();
   }

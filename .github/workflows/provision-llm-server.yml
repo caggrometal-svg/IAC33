@@ -1,0 +1,168 @@
+name: IAC33 Private LLM Server
+
+on:
+  workflow_dispatch:
+    inputs:
+      gpu_type:
+        description: 'Lambda GPU instance type'
+        required: true
+        default: 'gpu_1x_h100_pcie'
+        type: string
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      LAMBDA_API_BASE: https://cloud.lambdalabs.com/api/v1
+      LAMBDA_GPU_TYPE: ${{ inputs.gpu_type }}
+      OLLAMA_MODEL: gpt-oss:20b
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate required secrets
+        shell: bash
+        env:
+          LAMBDA_API_KEY: ${{ secrets.LAMBDA_API_KEY }}
+          LAMBDA_SSH_KEY_NAME: ${{ secrets.LAMBDA_SSH_KEY_NAME }}
+          LAMBDA_FIREWALL_RULESET_ID: ${{ secrets.LAMBDA_FIREWALL_RULESET_ID }}
+          IAC33_OLLAMA_API_KEY: ${{ secrets.IAC33_OLLAMA_API_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$LAMBDA_API_KEY"
+          test -n "$LAMBDA_SSH_KEY_NAME"
+          test -n "$LAMBDA_FIREWALL_RULESET_ID"
+          test -n "$IAC33_OLLAMA_API_KEY"
+
+      - name: Verify GPU capacity
+        id: capacity
+        shell: bash
+        env:
+          LAMBDA_API_KEY: ${{ secrets.LAMBDA_API_KEY }}
+        run: |
+          set -euo pipefail
+          data="$(curl -fsS --retry 3 -H "Authorization: Bearer $LAMBDA_API_KEY" "$LAMBDA_API_BASE/instance-types")"
+          entry="$(jq -er --arg type "$LAMBDA_GPU_TYPE" '.data | to_entries[] | select(.value.instance_type.name == $type)' <<<"$data")"
+          available_regions="$(jq -er -r '.value.regions_with_capacity_available[].name' <<<"$entry" | sort -u)"
+          region=""
+          for candidate in us-west-1 us-west-2 us-south-1 us-south-2 us-south-3 us-midwest-1 us-east-2 us-east-1; do
+            if grep -Fxq "$candidate" <<<"$available_regions"; then
+              region="$candidate"
+              break
+            fi
+          done
+          region="${region:-$(head -n 1 <<<"$available_regions")}"
+          test -n "$region"
+          price="$(jq -er '.value.instance_type.price_cents_per_hour | tonumber / 100' <<<"$entry")"
+          echo "region=$region" >> "$GITHUB_OUTPUT"
+          echo "price=$price" >> "$GITHUB_OUTPUT"
+          echo "GPU=$LAMBDA_GPU_TYPE region=$region price_per_hour_usd=$price"
+
+      - name: Build cloud-init payload
+        shell: bash
+        env:
+          IAC33_OLLAMA_API_KEY: ${{ secrets.IAC33_OLLAMA_API_KEY }}
+        run: |
+          set -euo pipefail
+          chmod 700 infra/llm-server/bootstrap.sh
+          {
+            echo '#!/usr/bin/env bash'
+            printf 'export IAC33_OLLAMA_MODEL=%q\n' "$OLLAMA_MODEL"
+            printf 'export IAC33_OLLAMA_API_KEY=%q\n' "$IAC33_OLLAMA_API_KEY"
+            cat infra/llm-server/bootstrap.sh
+          } > /tmp/iac33-llm-user-data.sh
+          chmod 700 /tmp/iac33-llm-user-data.sh
+
+      - name: Launch Lambda GPU instance
+        id: launch
+        shell: bash
+        env:
+          LAMBDA_API_KEY: ${{ secrets.LAMBDA_API_KEY }}
+          LAMBDA_SSH_KEY_NAME: ${{ secrets.LAMBDA_SSH_KEY_NAME }}
+          LAMBDA_FIREWALL_RULESET_ID: ${{ secrets.LAMBDA_FIREWALL_RULESET_ID }}
+          REGION: ${{ steps.capacity.outputs.region }}
+        run: |
+          set -euo pipefail
+          user_data="$(cat /tmp/iac33-llm-user-data.sh)"
+          payload="$(jq -n             --arg region "$REGION"             --arg type "$LAMBDA_GPU_TYPE"             --arg key "$LAMBDA_SSH_KEY_NAME"             --arg name "iac33-private-llm"             --arg ruleset "$LAMBDA_FIREWALL_RULESET_ID"             --arg user_data "$user_data"             '{
+              region_name: $region,
+              instance_type_name: $type,
+              ssh_key_names: [$key],
+              quantity: 1,
+              name: $name,
+              image: { family: "lambda-stack-22-04" },
+              firewall_rulesets: [$ruleset],
+              user_data: $user_data
+            }')"
+          response="$(curl -fsS --retry 3             -H "Authorization: Bearer $LAMBDA_API_KEY"             -H "Content-Type: application/json"             -X POST "$LAMBDA_API_BASE/instance-operations/launch"             -d "$payload")"
+          id="$(jq -er '.data.instance_ids[0]' <<<"$response")"
+          echo "instance_id=$id" >> "$GITHUB_OUTPUT"
+          echo "instance_id=$id"
+
+      - name: Wait for instance and verify inference
+        shell: bash
+        env:
+          LAMBDA_API_KEY: ${{ secrets.LAMBDA_API_KEY }}
+          IAC33_OLLAMA_API_KEY: ${{ secrets.IAC33_OLLAMA_API_KEY }}
+          INSTANCE_ID: ${{ steps.launch.outputs.instance_id }}
+          REGION: ${{ steps.capacity.outputs.region }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            response="$(curl -fsS --retry 2 -H "Authorization: Bearer $LAMBDA_API_KEY" "$LAMBDA_API_BASE/instances/$INSTANCE_ID" || true)"
+            ip="$(jq -r '.data.ip // empty' <<<"$response")"
+            status="$(jq -r '.data.status // empty' <<<"$response")"
+            if [[ -n "$ip" && "$status" == "active" ]]; then
+              host="$ip.sslip.io"
+              echo "Instance active: $host"
+              ready=0
+              for probe in $(seq 1 60); do
+                tags="$(curl -fsS --max-time 10                   -H "X-IAC33-LLM-Key: $IAC33_OLLAMA_API_KEY"                   "https://$host/api/tags" 2>/dev/null || true)"
+                if jq -e --arg model "$OLLAMA_MODEL" '.models[]? | select(.name == $model or (.name | startswith($model + ":")))' <<<"$tags" >/dev/null 2>&1; then
+                  ready=1
+                  break
+                fi
+                sleep 10
+              done
+              if [[ "$ready" != "1" ]]; then
+                echo "ERROR: Ollama model did not become ready within the verification window."
+                exit 1
+              fi
+
+              payload="$(jq -n --arg model "$OLLAMA_MODEL" '{
+                model: $model,
+                messages: [{role: "user", content: "ping"}],
+                stream: false
+              }')"
+              chat="$(curl -fsS --max-time 90                 -H "X-IAC33-LLM-Key: $IAC33_OLLAMA_API_KEY"                 -H "content-type: application/json"                 --data "$payload"                 "https://$host/v1/chat/completions")"
+              jq -e '.choices[0].message.content // empty' <<<"$chat" >/dev/null
+
+              echo "IAC33_OLLAMA_ENDPOINT=https://$host"
+              echo "IAC33_OLLAMA_MODEL=$OLLAMA_MODEL"
+              echo "instance_id=$INSTANCE_ID"
+              echo "region=$REGION"
+              echo "GPU=$LAMBDA_GPU_TYPE"
+              echo "IAC33_LLM_STATUS=ready"
+              break
+            fi
+            sleep 10
+          done
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            response="$(curl -fsS --retry 2 -H "Authorization: Bearer $LAMBDA_API_KEY" "$LAMBDA_API_BASE/instances/$INSTANCE_ID" || true)"
+            ip="$(jq -r '.data.ip // empty' <<<"$response")"
+            status="$(jq -r '.data.status // empty' <<<"$response")"
+            if [[ -n "$ip" && "$status" == "active" ]]; then
+              echo "IAC33_OLLAMA_ENDPOINT=https://$ip.sslip.io"
+              echo "IAC33_OLLAMA_MODEL=$OLLAMA_MODEL"
+              echo "instance_id=$INSTANCE_ID"
+              echo "region=$REGION"
+              echo "GPU=$LAMBDA_GPU_TYPE"
+              echo "Configure Render with IAC33_OLLAMA_ENDPOINT and IAC33_OLLAMA_API_KEY."
+              break
+            fi
+            sleep 10
+          done
