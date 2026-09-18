@@ -79,9 +79,10 @@ jobs:
           openssl pkey -in "$PEM" -pubout -outform DER -out "$PUB"
           OTA_PUBLIC_KEY_B64="$(base64 -w0 "$PUB")"
           CURRENT_PUBLIC="$(sed -n 's/^IAC33_OTA_PUBLIC_KEY_B64=//p' gradle.properties | head -n1)"
-          LAST_ANCHOR_COMMIT="$(git log -1 --format=%s -- gradle.properties || true)"
+          BOOTSTRAP_VERSION="$(sed -n 's/^IAC33_OTA_BOOTSTRAP_VERSION=//p' gradle.properties | head -n1)"
           OTA_BOOTSTRAP=0
-          if [ "$CURRENT_PUBLIC" != "$OTA_PUBLIC_KEY_B64" ] || [ "$LAST_ANCHOR_COMMIT" = "chore(ota): align trust anchor with active Bridge signer" ]; then
+          if [ -z "$BOOTSTRAP_VERSION" ]; then OTA_BOOTSTRAP=1; fi
+          if [ "$CURRENT_PUBLIC" != "$OTA_PUBLIC_KEY_B64" ]; then
             OTA_BOOTSTRAP=1
           fi
 
@@ -308,7 +309,12 @@ jobs:
               keyId:"iac33-bridge-ecdsa-v1",
               rollbackRef:$rollbackRef
             }' > manifest.json
-          gh release create "$TAG" "$ARTIFACT_NAME" manifest.json             --repo "$GITHUB_REPOSITORY"             --title "IAC33 OTA $VERSION_NAME"             --notes "Signed OTA release for IAC33 commit $GITHUB_SHA."
+          RELEASE_JSON="$(jq -n --arg tag "$TAG" --arg name "IAC33 OTA $VERSION_NAME" --arg body "Signed OTA release for IAC33 commit $GITHUB_SHA." '{tag_name:$tag,name:$name,body:$body,draft:false,prerelease:false}')"
+          RELEASE_RESPONSE="$(curl --fail-with-body --silent --show-error             -X POST             -H "Authorization: Bearer $GH_TOKEN"             -H "Accept: application/vnd.github+json"             -H "X-GitHub-Api-Version: 2022-11-28"             -H "Content-Type: application/json"             --data "$RELEASE_JSON"             "https://api.github.com/repos/$GITHUB_REPOSITORY/releases")"
+          UPLOAD_URL="$(printf '%s' "$RELEASE_RESPONSE" | jq -er '.upload_url' | sed 's/{?name,label}//')"
+          curl --fail-with-body --silent --show-error             -X POST             -H "Authorization: Bearer $GH_TOKEN"             -H "Accept: application/vnd.github+json"             -H "Content-Type: application/vnd.android.package-archive"             --data-binary @"$ARTIFACT_NAME"             "$UPLOAD_URL?name=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$ARTIFACT_NAME")"
+          curl --fail-with-body --silent --show-error             -X POST             -H "Authorization: Bearer $GH_TOKEN"             -H "Accept: application/vnd.github+json"             -H "Content-Type: application/json"             --data-binary @manifest.json             "$UPLOAD_URL?name=manifest.json"
+
 
       - name: Queue OTA command to IAC33 backend
         env:
