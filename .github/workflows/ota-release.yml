@@ -308,12 +308,13 @@ jobs:
               keyId:"iac33-bridge-ecdsa-v1",
               rollbackRef:$rollbackRef
             }' > manifest.json
-          gh release create "$TAG" "$ARTIFACT_NAME" manifest.json             --title "IAC33 OTA $VERSION_NAME"             --notes "Signed OTA release for IAC33 commit $GITHUB_SHA."
+          gh release create "$TAG" "$ARTIFACT_NAME" manifest.json             --repo "$GITHUB_REPOSITORY"             --title "IAC33 OTA $VERSION_NAME"             --notes "Signed OTA release for IAC33 commit $GITHUB_SHA."
 
       - name: Queue OTA command to IAC33 backend
         env:
           BACKEND_URL: https://iac33-backend.onrender.com
           OIDC_AUDIENCE: iac33-backend
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
           test -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN"
