@@ -35,6 +35,9 @@ jobs:
           node-version: '24'
           cache: 'npm'
           cache-dependency-path: 'backend/package.json'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm install --ignore-scripts
       - name: Backend tests
         working-directory: backend
         run: npm test
