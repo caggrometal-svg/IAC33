@@ -36,6 +36,7 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.IAC33_ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.IAC33_ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.IAC33_ANDROID_KEY_PASSWORD }}
+          BRIDGE_KEY_B64: ${{ secrets.BRIDGE_ECDSA_PRIVATE_KEY_B64 }}
         run: |
           set -eu
           test -n "$KEYSTORE_B64"
@@ -44,7 +45,22 @@ jobs:
           test -n "$KEY_PASSWORD"
           printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE_PATH"
           keytool -list -keystore "$KEYSTORE_PATH" -storepass "$KEYSTORE_PASSWORD" >/dev/null
-          gradle assembleRelease --no-daemon --stacktrace --console=plain             -Pandroid.injected.signing.store.file="$KEYSTORE_PATH"             -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD"             -Pandroid.injected.signing.key.alias="$KEY_ALIAS"             -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+          test -n "$BRIDGE_KEY_B64"
+          printf '%s' "$BRIDGE_KEY_B64" | base64 --decode > "$RUNNER_TEMP/bridge-key-build.raw"
+          if grep -q -- '-----BEGIN OPENSSH PRIVATE KEY-----' "$RUNNER_TEMP/bridge-key-build.raw"; then
+            ssh-keygen -p -m PEM -P "" -N "" -f "$RUNNER_TEMP/bridge-key-build.raw" >/dev/null 2>&1
+          fi
+          if openssl pkey -in "$RUNNER_TEMP/bridge-key-build.raw" -out "$RUNNER_TEMP/bridge-key-build.pem" 2>/dev/null; then
+            :
+          elif openssl pkey -inform DER -in "$RUNNER_TEMP/bridge-key-build.raw" -out "$RUNNER_TEMP/bridge-key-build.pem" 2>/dev/null; then
+            :
+          else
+            echo "Unable to normalize Bridge ECDSA public-key source" >&2
+            exit 1
+          fi
+          IAC33_OTA_PUBLIC_KEY_B64="$(openssl pkey -in "$RUNNER_TEMP/bridge-key-build.pem" -pubout -outform DER | base64 -w0)"
+          test -n "$IAC33_OTA_PUBLIC_KEY_B64"
+          gradle assembleRelease --no-daemon --stacktrace --console=plain             -PIAC33_OTA_PUBLIC_KEY_B64="$IAC33_OTA_PUBLIC_KEY_B64"             -Pandroid.injected.signing.store.file="$KEYSTORE_PATH"             -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD"             -Pandroid.injected.signing.key.alias="$KEY_ALIAS"             -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
           test -s app/build/outputs/apk/release/app-release.apk
 
       - name: Sign OTA artifact
