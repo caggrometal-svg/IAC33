@@ -32,7 +32,7 @@ jobs:
           grep -q "workflow_ref.*ota-release.yml@refs/heads/main" backend/src/github-oidc.js
           grep -q "id-token: write" .github/workflows/ota-release.yml
           grep -q "/v1/gpt/commands" .github/workflows/ota-release.yml
-          grep -q "app/**" .github/workflows/ota-release.yml
+          grep -qF "app/**" .github/workflows/ota-release.yml
           grep -q "IAC33_OTA_BOOTSTRAP_VERSION" .github/workflows/ota-release.yml
           grep -q "IAC33_VERSION_CODE" .github/workflows/ota-release.yml
       - name: Verify Render bridge
