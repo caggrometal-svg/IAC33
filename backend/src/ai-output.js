@@ -1,7 +1,7 @@
 export const STOP_SEQUENCES = ['\nUSER:', '\nASSISTANT:'];
 
 const TEMPLATE_LINE = /^(?:system|user|assistant|developer|tool)\s*:/i;
-const DIAGNOSTIC_LINE = /^(?:provider\s*(?:·|:)|http\s+(?:4\d\d|5\d\d)|ai_providers_unavailable|modo\s+local\s+activo|respaldo\s+local\s+activado)\b/i;
+const DIAGNOSTIC_LINE = /^(?:provider\s*(?:·|:)|http\s+(?:4\d\d|5\d\d)|ai_providers_unavailable|modo\s+local\s+activo|respaldo\s+local\s+activado)/i;
 
 export function sanitizeAssistantText(raw) {
   let text = String(raw || '')
