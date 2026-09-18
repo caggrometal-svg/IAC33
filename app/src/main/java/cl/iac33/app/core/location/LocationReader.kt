@@ -4,6 +4,9 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.LocationManager
+import android.os.Build
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import androidx.core.content.ContextCompat
 
 data class LocationSnapshot(
@@ -17,10 +20,29 @@ class LocationReader(context: Context) {
     private val appContext = context.applicationContext
     private val manager = appContext.getSystemService(Context.LOCATION_SERVICE) as LocationManager
 
-    fun readLastKnown(): LocationSnapshot? {
+    suspend fun readCurrentOrLastKnown(): LocationSnapshot? {
         val fine = ContextCompat.checkSelfPermission(appContext, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         val coarse = ContextCompat.checkSelfPermission(appContext, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
         if (!fine && !coarse) return null
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
+                try {
+                    if (manager.isProviderEnabled(provider)) {
+                        val current = suspendCancellableCoroutine<android.location.Location?> { continuation ->
+                            manager.getCurrentLocation(provider, null, appContext.mainExecutor) { location ->
+                                if (continuation.isActive) continuation.resume(location)
+                            }
+                        }
+                        if (current != null) {
+                            return LocationSnapshot(current.latitude, current.longitude, current.accuracy, current.provider ?: provider)
+                        }
+                    }
+                } catch (_: SecurityException) {
+                    return null
+                }
+            }
+        }
 
         val candidates = buildList {
             for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
