@@ -4,6 +4,7 @@ import { Pool } from 'pg';
 import { allowedTransitions, validCommand } from './command-core.js';
 import { generateWithFreePool } from './ai-router.js';
 import { validateGptCommand, commandDigest } from './gpt-command-bridge.js';
+import { verifyGitHubActionsToken } from './github-oidc.js';
 import { fetchLatestSeismic } from './seismic.js';
 
 const MAX_BODY_BYTES = 256 * 1024;
@@ -29,6 +30,13 @@ function authorized(req) {
   const expected = Buffer.from(`Bearer ${controlToken}`);
   const actual = Buffer.from(value);
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+async function authorizedGptBridge(req) {
+  if (authorized(req)) return true;
+  const value = String(req.headers.authorization || '');
+  if (!value.startsWith('Bearer ')) return false;
+  return verifyGitHubActionsToken(value.slice(7));
 }
 
 function send(res, status, body) {
@@ -208,7 +216,14 @@ const server = http.createServer(async (req, res) => {
       if (!deviceAuth.ok) return send(res, deviceAuth.status, { ok: false, error: deviceAuth.error });
       req.bodyRaw = canonicalBody;
     }
-    if (!deviceProtected && !authorized(req)) return send(res, 401, { ok: false, error: 'UNAUTHORIZED' });
+    if (!deviceProtected) {
+      const gptBridgePath = req.method === 'POST' && path === '/v1/gpt/commands';
+      if (gptBridgePath) {
+        if (!(await authorizedGptBridge(req))) return send(res, 401, { ok: false, error: 'UNAUTHORIZED' });
+      } else if (!authorized(req)) {
+        return send(res, 401, { ok: false, error: 'UNAUTHORIZED' });
+      }
+    }
     if (req.method === 'POST' && path === '/v1/gpt/commands') {
       const input = await body(req);
       if (!validateGptCommand(input)) return send(res, 400, { ok: false, error: 'INVALID_GPT_COMMAND' });
