@@ -72,6 +72,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
@@ -220,6 +221,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private const val AI_REQUEST_TIMEOUT_MS = 10_000L
+private const val AI_UI_TIMEOUT_MS = 12_000L
+
 @Composable
 private fun AiPanel(
     lines: List<ChatLine>,
@@ -254,12 +258,15 @@ private fun AiPanel(
                     )
                 ) + updated.takeLast(16).map { AiMessage(it.role, it.text.take(ChatStore.MAX_MESSAGE_CHARS)) }
 
-                val result = engine.generate(
-                    AiRequest(
-                        conversationId = UUID.randomUUID().toString(),
-                        messages = messages
+                val result = withTimeout(AI_UI_TIMEOUT_MS) {
+                    engine.generate(
+                        AiRequest(
+                            conversationId = UUID.randomUUID().toString(),
+                            messages = messages,
+                            timeoutMs = AI_REQUEST_TIMEOUT_MS
+                        )
                     )
-                )
+                }
 
                 when (result) {
                     is OperationResult.Success -> {
@@ -285,8 +292,9 @@ private fun AiPanel(
                 throw cancelled
             } catch (error: Exception) {
                 onLinesChange(updated + ChatLine("assistant", "IA: " + (error.message ?: "error interno")))
+            } finally {
+                busy = false
             }
-            busy = false
         }
     }
 
@@ -329,6 +337,18 @@ private fun AiPanel(
                             modifier = Modifier.padding(10.dp),
                             style = MaterialTheme.typography.bodyLarge
                         )
+                    }
+                }
+                if (busy) {
+                    item {
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.height(18.dp))
+                            Text("IAC33 está procesando…", style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 }
             }
