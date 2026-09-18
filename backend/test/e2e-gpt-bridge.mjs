@@ -69,7 +69,7 @@ const ota = {
       artifactSize: 1024,
       algorithm: 'SHA256withECDSA',
       signatureBase64: 'e2e-signature',
-      keyId: 'e2e-key',
+      keyId: 'iac33-bridge-ecdsa-v1',
       rollbackRef: 'e2e-rollback'
     }
   },
