@@ -1,3 +1,10 @@
 <resources>
-    <style name="Theme.IAC33" parent="android:style/Theme.Material.Light.NoActionBar" />
+    <style name="Theme.IAC33" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#030712</item>
+        <item name="android:statusBarColor">#030712</item>
+        <item name="android:navigationBarColor">#030712</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:colorAccent">#38BDF8</item>
+    </style>
 </resources>
