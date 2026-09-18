@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.os.Build
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 import androidx.core.content.ContextCompat
 
@@ -29,9 +30,11 @@ class LocationReader(context: Context) {
             for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
                 try {
                     if (manager.isProviderEnabled(provider)) {
-                        val current = suspendCancellableCoroutine<android.location.Location?> { continuation ->
-                            manager.getCurrentLocation(provider, null, appContext.mainExecutor) { location ->
-                                if (continuation.isActive) continuation.resume(location)
+                        val current = withTimeoutOrNull(CURRENT_LOCATION_TIMEOUT_MS) {
+                            suspendCancellableCoroutine<android.location.Location?> { continuation ->
+                                manager.getCurrentLocation(provider, null, appContext.mainExecutor) { location ->
+                                    if (continuation.isActive) continuation.resume(location)
+                                }
                             }
                         }
                         if (current != null) {
@@ -62,5 +65,8 @@ class LocationReader(context: Context) {
             best.accuracy,
             best.provider ?: "unknown"
         )
+    }
+    companion object {
+        private const val CURRENT_LOCATION_TIMEOUT_MS = 8_000L
     }
 }
