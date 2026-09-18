@@ -123,17 +123,74 @@ async function callOpenAiCompatible(url, key, model, messages, timeoutMs) {
 export async function generateWithFreePool({ messages, timeoutMs = 18000 }) {
   const configuredOrder = (process.env.AI_PROVIDER_ORDER || 'kilo,pollinations,horde,openrouter,gemini,cloudflare,groq,freeinference,animica').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
   const order = [...new Set(configuredOrder)]; const diagnostics = [];
-  const totalBudgetMs = Math.min(Math.max(Number(process.env.AI_TOTAL_TIMEOUT_MS || 9000), 1000), 120000);
+  const totalBudgetMs = Math.min(Math.max(Number(process.env.AI_TOTAL_TIMEOUT_MS || 7000), 1000), 120000);
   const deadline = Date.now() + totalBudgetMs;
-  for (const id of order) {
-    const provider = providers[id]; if (!provider || (provider.key && !process.env[provider.key])) { diagnostics.push({ provider: id, state: 'NOT_CONFIGURED' }); continue; }
+  const available = order.filter((id) => {
+    const provider = providers[id];
+    if (!provider || (provider.key && !process.env[provider.key])) {
+      diagnostics.push({ provider: id, state: 'NOT_CONFIGURED' });
+      return false;
+    }
+    return true;
+  });
+  if (!available.length) {
+    const error = new Error('AI_PROVIDERS_UNAVAILABLE'); error.diagnostics = diagnostics; throw error;
+  }
+
+  // Fast path: race the first free/community providers instead of waiting
+  // sequentially. The first valid answer wins, which makes conversation
+  // latency much closer to a normal chat service when one provider is slow.
+  const wave = available.slice(0, Math.min(3, available.length));
+  const attempts = wave.map(async (id) => {
+    const provider = providers[id];
     const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) { diagnostics.push({ provider: id, state: 'BUDGET_EXHAUSTED' }); break; }
-    const providerTimeoutMs = id === 'kilo' ? Math.min(Math.max(Number(process.env.AI_KILO_TIMEOUT_MS || 3000), 1500), 8000) : id === 'horde' ? Math.min(Math.max(Number(process.env.AI_HORDE_TIMEOUT_MS || 6000), 3000), 10000) : id === 'pollinations' ? Math.min(Math.max(Number(process.env.AI_POLLINATIONS_TIMEOUT_MS || 3000), 1500), 8000) : Math.min(Math.max(Number(process.env.AI_PROVIDER_TIMEOUT_MS || 2500), 1000), 10000);
+    const providerTimeoutMs =
+      id === 'kilo' ? Math.min(Math.max(Number(process.env.AI_KILO_TIMEOUT_MS || 2500), 1200), 6000) :
+      id === 'horde' ? Math.min(Math.max(Number(process.env.AI_HORDE_TIMEOUT_MS || 4500), 2500), 8000) :
+      id === 'pollinations' ? Math.min(Math.max(Number(process.env.AI_POLLINATIONS_TIMEOUT_MS || 2500), 1200), 6000) :
+      Math.min(Math.max(Number(process.env.AI_PROVIDER_TIMEOUT_MS || 2200), 900), 7000);
+    const attemptTimeoutMs = Math.min(timeoutMs, providerTimeoutMs, Math.max(1000, remainingMs));
+    const started = Date.now();
+    try {
+      const result = await provider.call(messages, attemptTimeoutMs);
+      return { ok: true, id, result, latencyMs: Date.now() - started };
+    } catch (error) {
+      return { ok: false, id, error, latencyMs: Date.now() - started };
+    }
+  });
+
+  const pending = new Set(attempts);
+  while (pending.size) {
+    const settled = await Promise.race([...pending]);
+    pending.delete([...pending].find((promise) => promise === settled) || attempts[0]);
+    if (settled.ok) {
+      diagnostics.push({ provider: settled.id, state: 'RESPONDING', latencyMs: settled.latencyMs });
+      return { ...settled.result, provider: settled.id, diagnostics };
+    }
+    diagnostics.push({
+      provider: settled.id,
+      state: settled.error?.name === 'AbortError' ? 'TIMEOUT' : settled.error?.status === 429 ? 'RATE_LIMITED' : 'FAILED',
+      status: settled.error?.status || 500,
+      latencyMs: settled.latencyMs
+    });
+  }
+
+  // Second wave: remaining providers are true sequential fallbacks, preserving
+  // quota and avoiding a thundering herd against every configured service.
+  for (const id of available.slice(3)) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    const provider = providers[id];
+    const providerTimeoutMs = Math.min(Math.max(Number(process.env.AI_PROVIDER_TIMEOUT_MS || 2200), 900), 7000);
     const attemptTimeoutMs = Math.min(timeoutMs, providerTimeoutMs, remainingMs);
     const started = Date.now();
-    try { const result = await provider.call(messages, attemptTimeoutMs); diagnostics.push({ provider: id, state: 'RESPONDING', latencyMs: Date.now() - started }); return { ...result, provider: id, diagnostics }; }
-    catch (error) { diagnostics.push({ provider: id, state: error?.name === 'AbortError' ? 'TIMEOUT' : error?.status === 429 ? 'RATE_LIMITED' : 'FAILED', status: error?.status || 500, latencyMs: Date.now() - started }); }
+    try {
+      const result = await provider.call(messages, attemptTimeoutMs);
+      diagnostics.push({ provider: id, state: 'RESPONDING', latencyMs: Date.now() - started });
+      return { ...result, provider: id, diagnostics };
+    } catch (error) {
+      diagnostics.push({ provider: id, state: error?.name === 'AbortError' ? 'TIMEOUT' : error?.status === 429 ? 'RATE_LIMITED' : 'FAILED', status: error?.status || 500, latencyMs: Date.now() - started });
+    }
   }
   const error = new Error('AI_PROVIDERS_UNAVAILABLE'); error.diagnostics = diagnostics; throw error;
 }
