@@ -1,0 +1,45 @@
+name: IAC33 Bridge Integrity
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iac33-bridge-integrity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bridge-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Node 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Verify GPT bridge contract
+        run: |
+          set -eu
+          grep -q "repo:caggrometal-svg@322356974/IAC33@1372305375:ref:refs/heads/main" backend/src/github-oidc.js
+          grep -q "workflow_ref.*ota-release.yml@refs/heads/main" backend/src/github-oidc.js
+          grep -q "id-token: write" .github/workflows/ota-release.yml
+          grep -q "/v1/gpt/commands" .github/workflows/ota-release.yml
+          grep -q "app/**" .github/workflows/ota-release.yml
+          grep -q "IAC33_OTA_BOOTSTRAP_VERSION" .github/workflows/ota-release.yml
+          grep -q "IAC33_VERSION_CODE" .github/workflows/ota-release.yml
+      - name: Verify Render bridge
+        run: |
+          set -eu
+          curl --fail --silent --show-error https://iac33-backend.onrender.com/health | grep -q '"ok":true'
+          curl --fail --silent --show-error https://iac33-backend.onrender.com/ready | grep -q '"ok":true'
+      - name: Verify backend syntax
+        working-directory: backend
+        run: node --check src/server.js && node --check src/github-oidc.js && node --check src/gpt-command-bridge.js
