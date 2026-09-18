@@ -72,7 +72,7 @@ fun IAC33Map(
                 map.overlays.add(marker)
             }
 
-            if (copyright.parent == null) map.overlays.add(copyright)
+            if (!map.overlays.contains(copyright)) map.overlays.add(copyright)
             map.invalidate()
         }
     )
