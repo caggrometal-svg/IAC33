@@ -7,6 +7,7 @@ import { sanitizeAssistantText, classifyIntent } from './ai-output.js';
 import { validateGptCommand, commandDigest } from './gpt-command-bridge.js';
 import { verifyGitHubActionsToken } from './github-oidc.js';
 import { fetchLatestSeismic } from './seismic.js';
+import { textToImage, imageToImage, textToVideo, imageToVideo, textToSpeech, getJob, readAsset, jobPublic } from './media-service.js';
 
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_AI_MESSAGES = 64;
@@ -330,6 +331,109 @@ const server = http.createServer(async (req, res) => {
       } finally {
         req.off('aborted', abortRequest);
         res.off('close', abortRequest);
+        aiInflight = Math.max(0, aiInflight - 1);
+      }
+    }
+    if (path.startsWith('/v1/ai/media/jobs/')) {
+      const match = path.match(/^\/v1\/ai\/media\/jobs\/([^/]+)(?:\/file)?$/);
+      if (!match) return send(res, 404, { ok: false, error: 'NOT_FOUND' });
+      const id = decodeURIComponent(match[1]);
+      const job = getJob(id);
+      if (!job) return send(res, 404, { ok: false, error: 'MEDIA_JOB_NOT_FOUND' });
+      if (req.method === 'GET' && path.endsWith('/file')) {
+        const asset = job.assetId ? await readAsset(job.assetId) : null;
+        if (!asset) return send(res, 404, { ok: false, error: 'MEDIA_ASSET_NOT_FOUND' });
+        if (asset.data.length > 25 * 1024 * 1024) return send(res, 502, { ok: false, error: 'MEDIA_ASSET_TOO_LARGE' });
+        res.writeHead(200, {
+          'content-type': asset.mimeType,
+          'content-length': String(asset.size),
+          'cache-control': 'private, max-age=3600',
+          'x-content-type-options': 'nosniff'
+        });
+        return res.end(asset.data);
+      }
+      if (req.method === 'GET') return send(res, 200, { ok: true, ...jobPublic(job) });
+      return send(res, 405, { ok: false, error: 'METHOD_NOT_ALLOWED' });
+    }
+    if (req.method === 'GET' && path.startsWith('/v1/ai/media/assets/')) {
+      const id = decodeURIComponent(path.slice('/v1/ai/media/assets/'.length));
+      const asset = await readAsset(id);
+      if (!asset) return send(res, 404, { ok: false, error: 'MEDIA_ASSET_NOT_FOUND' });
+      res.writeHead(200, {
+        'content-type': asset.mimeType,
+        'content-length': String(asset.size),
+        'cache-control': 'private, max-age=3600',
+        'x-content-type-options': 'nosniff'
+      });
+      return res.end(asset.data);
+    }
+    if (req.method === 'POST' && path === '/v1/ai/text-to-image') {
+      if (!aiAllowed(req) || aiInflight >= MAX_AI_INFLIGHT) return send(res, 429, { ok: false, error: 'AI_RATE_LIMITED' });
+      aiInflight += 1;
+      try {
+        const input = await body(req, 12 * 1024 * 1024);
+        const result = await textToImage(input);
+        return send(res, 200, { ok: true, provider: result.provider, mimeType: result.mimeType, assetUrl: '/v1/ai/media/assets/' + encodeURIComponent(result.assetId) });
+      } catch (error) {
+        const status = Number.isInteger(error?.status) ? error.status : 503;
+        return send(res, status, { ok: false, error: error?.code || 'MEDIA_GENERATION_FAILED' });
+      } finally {
+        aiInflight = Math.max(0, aiInflight - 1);
+      }
+    }
+    if (req.method === 'POST' && path === '/v1/ai/image-to-image') {
+      if (!aiAllowed(req) || aiInflight >= MAX_AI_INFLIGHT) return send(res, 429, { ok: false, error: 'AI_RATE_LIMITED' });
+      aiInflight += 1;
+      try {
+        const input = await body(req, 12 * 1024 * 1024);
+        const result = await imageToImage(input);
+        return send(res, 200, { ok: true, provider: result.provider, mimeType: result.mimeType, assetUrl: '/v1/ai/media/assets/' + encodeURIComponent(result.assetId) });
+      } catch (error) {
+        const status = Number.isInteger(error?.status) ? error.status : 503;
+        return send(res, status, { ok: false, error: error?.code || 'MEDIA_GENERATION_FAILED' });
+      } finally {
+        aiInflight = Math.max(0, aiInflight - 1);
+      }
+    }
+    if (req.method === 'POST' && path === '/v1/ai/text-to-video') {
+      if (!aiAllowed(req) || aiInflight >= MAX_AI_INFLIGHT) return send(res, 429, { ok: false, error: 'AI_RATE_LIMITED' });
+      aiInflight += 1;
+      try {
+        const input = await body(req, 12 * 1024 * 1024);
+        const job = await textToVideo(input);
+        return send(res, 202, { ok: true, ...jobPublic(job) });
+      } catch (error) {
+        const status = Number.isInteger(error?.status) ? error.status : 503;
+        return send(res, status, { ok: false, error: error?.code || 'MEDIA_GENERATION_FAILED' });
+      } finally {
+        aiInflight = Math.max(0, aiInflight - 1);
+      }
+    }
+    if (req.method === 'POST' && path === '/v1/ai/image-to-video') {
+      if (!aiAllowed(req) || aiInflight >= MAX_AI_INFLIGHT) return send(res, 429, { ok: false, error: 'AI_RATE_LIMITED' });
+      aiInflight += 1;
+      try {
+        const input = await body(req, 12 * 1024 * 1024);
+        const job = await imageToVideo(input);
+        return send(res, 202, { ok: true, ...jobPublic(job) });
+      } catch (error) {
+        const status = Number.isInteger(error?.status) ? error.status : 503;
+        return send(res, status, { ok: false, error: error?.code || 'MEDIA_GENERATION_FAILED' });
+      } finally {
+        aiInflight = Math.max(0, aiInflight - 1);
+      }
+    }
+    if (req.method === 'POST' && path === '/v1/ai/text-to-speech') {
+      if (!aiAllowed(req) || aiInflight >= MAX_AI_INFLIGHT) return send(res, 429, { ok: false, error: 'AI_RATE_LIMITED' });
+      aiInflight += 1;
+      try {
+        const input = await body(req, 512 * 1024);
+        const result = await textToSpeech(input);
+        return send(res, 200, { ok: true, provider: result.provider, mimeType: result.mimeType, assetUrl: '/v1/ai/media/assets/' + encodeURIComponent(result.assetId) });
+      } catch (error) {
+        const status = Number.isInteger(error?.status) ? error.status : 503;
+        return send(res, status, { ok: false, error: error?.code || 'MEDIA_GENERATION_FAILED' });
+      } finally {
         aiInflight = Math.max(0, aiInflight - 1);
       }
     }
