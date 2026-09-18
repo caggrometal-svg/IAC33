@@ -24,7 +24,7 @@ jobs:
       matrix:
         include:
           - language: javascript-typescript
-            build-mode: ${{ matrix.build-mode }}
+            build-mode: none
           - language: java-kotlin
             build-mode: autobuild
     steps:
@@ -35,7 +35,7 @@ jobs:
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
-          build-mode: none
+          build-mode: ${{ matrix.build-mode }}
 
       - name: Autobuild Java/Kotlin
         if: matrix.build-mode == 'autobuild'
