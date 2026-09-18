@@ -9,6 +9,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -93,7 +94,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 ) { padding ->
-                    Column(Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
+                    Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp).imePadding()) {
                         if (selected == 0) AiPanel()
                         else if (selected == 1) SeismicPanel()
                         else if (selected == 4) GpsPanel(location)
@@ -122,13 +123,19 @@ private fun AiPanel() {
     var draft by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var lines by remember { mutableStateOf(listOf(ChatLine("assistant", "IAC33 listo. Puedes escribir una consulta."))) }
+    val listState = rememberLazyListState()
 
-    Column(Modifier.fillMaxSize()) {
+    LaunchedEffect(lines.size) {
+        if (lines.isNotEmpty()) listState.animateScrollToItem(lines.lastIndex)
+    }
+
+    Column(Modifier.fillMaxSize().navigationBarsPadding()) {
         Text("IA", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(8.dp))
         Card(Modifier.fillMaxWidth().weight(1f)) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(12.dp),
+                state = listState,
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(lines) { line ->
@@ -159,12 +166,20 @@ private fun AiPanel() {
                     draft = ""
                     busy = true
                     scope.launch {
-                        val messages = updated.map { AiMessage(it.role, it.text) }
-                        when (val result = engine.generate(AiRequest(UUID.randomUUID().toString(), messages))) {
-                            is OperationResult.Success -> lines = lines + ChatLine("assistant", result.value.text.orEmpty().ifBlank { "Respuesta vacía." })
-                            is OperationResult.Failure -> lines = lines + ChatLine("assistant", "Error: ${result.message}")
+                        try {
+                            val messages = updated.map { AiMessage(it.role, it.text) }
+                            val result = runCatching {
+                                engine.generate(AiRequest(UUID.randomUUID().toString(), messages))
+                            }.getOrElse { throwable ->
+                                OperationResult.Failure(throwable.message ?: "Error interno de IA")
+                            }
+                            when (result) {
+                                is OperationResult.Success -> lines = lines + ChatLine("assistant", result.value.text.orEmpty().ifBlank { "Respuesta vacía." })
+                                is OperationResult.Failure -> lines = lines + ChatLine("assistant", "Error: ${result.message}")
+                            }
+                        } finally {
+                            busy = false
                         }
-                        busy = false
                     }
                 },
                 enabled = !busy && draft.isNotBlank(),
@@ -184,8 +199,11 @@ private fun DashboardPanel(section: String, connectivityStatus: ConnectivityStat
         Column(Modifier.padding(16.dp)) {
             Text("IAC33 · $section", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(8.dp))
-            Text("Módulo disponible")
+            Text("Módulo disponible", style = MaterialTheme.typography.bodyLarge)
+            Spacer(Modifier.height(4.dp))
             Text("Conectividad: ${connectivityStatus.name}")
+            Spacer(Modifier.height(12.dp))
+            AssistChip(onClick = {}, enabled = false, label = { Text("Núcleo IAC33 activo") })
         }
     }
 }
@@ -235,7 +253,7 @@ private fun SeismicPanel() {
 
     LaunchedEffect(Unit) { refresh() }
 
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("Sismicidad", style = MaterialTheme.typography.headlineMedium)
             TextButton(onClick = { refresh() }, enabled = !loading) { Text("Actualizar") }
