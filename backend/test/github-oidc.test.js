@@ -16,6 +16,7 @@ function token(overrides = {}) {
     repository_id: '1372305375',
     repository_owner: 'caggrometal-svg',
     repository_owner_id: '322356974',
+    sub: 'repo:caggrometal-svg@322356974/IAC33@1372305375:ref:refs/heads/main',
     ref: 'refs/heads/main',
     ref_type: 'branch',
     event_name: 'push',
@@ -63,4 +64,8 @@ test('rejects a token from another repository id', async () => {
 
 test('rejects a token from a disallowed event', async () => {
   assert.equal(await verifyGitHubActionsToken(token({ event_name: 'pull_request' })), false);
+});
+
+test('rejects a token with a different immutable subject', async () => {
+  assert.equal(await verifyGitHubActionsToken(token({ sub: 'repo:caggrometal-svg@322356974/IAC33@1372305375:ref:refs/heads/dev' })), false);
 });
