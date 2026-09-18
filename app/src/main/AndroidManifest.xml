@@ -10,7 +10,9 @@
         android:allowBackup="false"
         android:label="IAC33"
         android:supportsRtl="true"
-        android:theme="@style/Theme.IAC33">
+        android:theme="@style/Theme.IAC33"
+        android:icon="@drawable/ic_launcher"
+        android:roundIcon="@drawable/ic_launcher">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
