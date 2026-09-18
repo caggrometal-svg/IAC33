@@ -254,11 +254,21 @@ const server = http.createServer(async (req, res) => {
       catch (error) { return send(res, 503, { ok: false, error: error.message || 'AI_PROVIDERS_UNAVAILABLE', diagnostics: error.diagnostics || [] }); }
     }
     if (req.method === 'POST' && path === '/v1/devices/enroll') {
+      if (!pairingAllowed(req)) return send(res, 429, { ok: false, error: 'PAIRING_RATE_LIMITED' });
       const input = await body(req);
       if (!devicePairingToken || !tokenMatches(input.pairingToken, devicePairingToken)) return send(res, 401, { ok: false, error: 'PAIRING_REQUIRED' });
       if (!pool) return send(res, 503, { ok: false, error: 'DATABASE_UNCONFIGURED' });
-      if (typeof input.deviceId !== 'string' || !DEVICE_ID_PATTERN.test(input.deviceId) || typeof input.publicKeyPem !== 'string' || !/^-----BEGIN PUBLIC KEY-----[\s\S]+-----END PUBLIC KEY-----\s*$/.test(input.publicKeyPem)) return send(res, 400, { ok: false, error: 'INVALID_DEVICE_IDENTITY' });
-      await pool.query('INSERT INTO devices(id,public_key_pem) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET public_key_pem=EXCLUDED.public_key_pem', [input.deviceId, input.publicKeyPem]);
+      if (typeof input.deviceId !== 'string' || !DEVICE_ID_PATTERN.test(input.deviceId) || !validateDevicePublicKey(input.publicKeyPem)) {
+        return send(res, 400, { ok: false, error: 'INVALID_DEVICE_IDENTITY' });
+      }
+      const existing = await pool.query('SELECT public_key_pem FROM devices WHERE id=$1', [input.deviceId]);
+      if (existing.rowCount) {
+        if (String(existing.rows[0].public_key_pem).trim() !== input.publicKeyPem.trim()) {
+          return send(res, 409, { ok: false, error: 'DEVICE_ID_ALREADY_ENROLLED' });
+        }
+        return send(res, 200, { ok: true, deviceId: input.deviceId, alreadyEnrolled: true });
+      }
+      await pool.query('INSERT INTO devices(id,public_key_pem) VALUES($1,$2)', [input.deviceId, input.publicKeyPem]);
       return send(res, 201, { ok: true, deviceId: input.deviceId });
     }
     const deviceProtected = path.startsWith('/v1/device/');
