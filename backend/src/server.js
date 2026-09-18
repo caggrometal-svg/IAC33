@@ -266,13 +266,14 @@ const server = http.createServer(async (req, res) => {
       if (!aiAllowed(req)) return send(res, 429, { ok: false, error: 'AI_RATE_LIMITED' });
       if (aiInflight >= MAX_AI_INFLIGHT) return send(res, 503, { ok: false, error: 'AI_BUSY' });
       aiInflight += 1;
-      const input = await body(req);
-      if (!Array.isArray(input.messages) || !input.messages.length || input.messages.length > MAX_AI_MESSAGES || input.messages.some((m) => !m || !['system', 'user', 'assistant'].includes(m.role) || typeof m.content !== 'string' || !m.content.trim() || m.content.length > MAX_AI_MESSAGE_CHARS)) return send(res, 400, { ok: false, error: 'INVALID_AI_REQUEST' });
-      const requestedTimeout = Number(input.timeoutMs || 30000);
+      try {
+        const input = await body(req);
+        if (!Array.isArray(input.messages) || !input.messages.length || input.messages.length > MAX_AI_MESSAGES || input.messages.some((m) => !m || !['system', 'user', 'assistant'].includes(m.role) || typeof m.content !== 'string' || !m.content.trim() || m.content.length > MAX_AI_MESSAGE_CHARS)) return send(res, 400, { ok: false, error: 'INVALID_AI_REQUEST' });
+        const requestedTimeout = Number(input.timeoutMs || 30000);
       const timeoutMs = Number.isFinite(requestedTimeout) ? Math.min(Math.max(requestedTimeout, AI_MIN_TIMEOUT_MS), AI_MAX_TIMEOUT_MS) : 30000;
-      try { const result = await generateWithFreePool({ messages: input.messages, timeoutMs }); return send(res, 200, { ok: true, provider: result.provider, model: result.model, text: String(result.text).slice(0, MAX_AI_RESPONSE_CHARS), diagnostics: result.diagnostics }); }
-      catch (error) { return send(res, 503, { ok: false, error: error.message || 'AI_PROVIDERS_UNAVAILABLE', diagnostics: error.diagnostics || [] }); }
-      finally { aiInflight = Math.max(0, aiInflight - 1); }
+        try { const result = await generateWithFreePool({ messages: input.messages, timeoutMs }); return send(res, 200, { ok: true, provider: result.provider, model: result.model, text: String(result.text).slice(0, MAX_AI_RESPONSE_CHARS), diagnostics: result.diagnostics }); }
+        catch (error) { return send(res, 503, { ok: false, error: error.message || 'AI_PROVIDERS_UNAVAILABLE', diagnostics: error.diagnostics || [] }); }
+      } finally { aiInflight = Math.max(0, aiInflight - 1); }
     }
     if (req.method === 'GET' && path === '/v1/gpt/ota/bootstrap-status') {
       if (!(await authorizedGptBridge(req))) return send(res, 401, { ok: false, error: 'GPT_BRIDGE_UNAUTHORIZED' });
