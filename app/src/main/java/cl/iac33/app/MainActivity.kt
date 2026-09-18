@@ -52,6 +52,7 @@ class MainActivity : ComponentActivity() {
                 val connectivityMonitor = remember { ConnectivityMonitor(this@MainActivity) }
                 val locationReader = remember { LocationReader(this@MainActivity) }
                 val lifecycleOwner = LocalLifecycleOwner.current
+                val locationScope = rememberCoroutineScope()
 
                 DisposableEffect(Unit) {
                     connectivityMonitor.start { status -> connectivityStatus = status }
@@ -59,7 +60,7 @@ class MainActivity : ComponentActivity() {
                 }
                 DisposableEffect(lifecycleOwner) {
                     val observer = LifecycleEventObserver { _, event ->
-                        if (event == Lifecycle.Event.ON_RESUME) location = locationReader.readCurrentOrLastKnown()
+                        if (event == Lifecycle.Event.ON_RESUME) locationScope.launch { location = locationReader.readCurrentOrLastKnown() }
                     }
                     lifecycleOwner.lifecycle.addObserver(observer)
                     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
