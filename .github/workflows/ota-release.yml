@@ -141,7 +141,10 @@ jobs:
             git push
             BOOTSTRAP_VERSION="$OTA_VERSION_NAME"
           fi
+          test -n "$OTA_VERSION_NAME"
+          test -n "$OTA_VERSION_CODE"
           echo "IAC33_VERSION_NAME=$OTA_VERSION_NAME" >> "$GITHUB_ENV"
+          echo "OTA_VERSION_NAME=$OTA_VERSION_NAME" >> "$GITHUB_ENV"
           echo "IAC33_VERSION_CODE=$OTA_VERSION_CODE" >> "$GITHUB_ENV"
           echo "IAC33_OTA_BOOTSTRAP_VERSION=$BOOTSTRAP_VERSION" >> "$GITHUB_ENV"
           printf '%s' "$OTA_PUBLIC_KEY_B64" | base64 --decode > "$RUNNER_TEMP/iac33-ota-public-key.der"
@@ -289,7 +292,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          VERSION_NAME="${OTA_VERSION_NAME}"
+          test -n "${IAC33_VERSION_NAME:-}"
+          VERSION_NAME="${IAC33_VERSION_NAME}"
           TAG="ota-${VERSION_NAME}-${GITHUB_RUN_NUMBER}"
           ARTIFACT_NAME="iac33-${TAG}.apk"
           cp app/build/outputs/apk/release/app-release.apk "$ARTIFACT_NAME"
@@ -303,9 +307,15 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$ARTIFACT_NAME" manifest.json --clobber
           else
-            gh release create "$TAG" "$ARTIFACT_NAME" manifest.json --target "$GITHUB_SHA" --title "IAC33 OTA $VERSION_NAME" --notes "Signed OTA release for IAC33 commit $GITHUB_SHA."
+            gh release create "$TAG" "$ARTIFACT_NAME" manifest.json --target "$(git rev-parse HEAD)" --title "IAC33 OTA $VERSION_NAME" --notes "Signed OTA release for IAC33 commit $(git rev-parse HEAD)."
           fi
-          gh release view "$TAG" --json tagName,url,name
+          RELEASE_TARGET="$(git rev-parse HEAD)"
+          if gh release view "$TAG" --json tagName,url,name >/dev/null 2>&1; then
+            gh release view "$TAG" --json tagName,url,name
+          else
+            echo "Release $TAG was not created" >&2
+            exit 1
+          fi
 
 
       - name: Queue OTA command to IAC33 backend
@@ -327,7 +337,7 @@ jobs:
               exit 0
             fi
           fi
-          VERSION_NAME="$OTA_VERSION_NAME"
+          VERSION_NAME="${IAC33_VERSION_NAME:?IAC33_VERSION_NAME is not set}"
           TAG="ota-$VERSION_NAME-$GITHUB_RUN_NUMBER"
           ARTIFACT_NAME="iac33-$TAG.apk"
           ARTIFACT_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$ARTIFACT_NAME"
