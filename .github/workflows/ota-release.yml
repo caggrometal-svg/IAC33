@@ -37,6 +37,7 @@ jobs:
           KEY_ALIAS: ${{ secrets.IAC33_ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.IAC33_ANDROID_KEY_PASSWORD }}
           BRIDGE_KEY_B64: ${{ secrets.BRIDGE_ECDSA_PRIVATE_KEY_B64 }}
+          BRIDGE_KEY_B64: ${{ secrets.BRIDGE_ECDSA_PRIVATE_KEY_B64 }}
         run: |
           set -eu
           test -n "$KEYSTORE_B64"
