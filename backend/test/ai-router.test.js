@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const router = await import(\`../src/ai-router.js?test=\${Date.now()}-\${Math.random()}\`);
+const router = await import(`../src/ai-router.js?test=${Date.now()}-${Math.random()}`);
 const originalFetch = globalThis.fetch;
 const originalEnv = { ...process.env };
 
