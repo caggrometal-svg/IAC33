@@ -1,3 +1,5 @@
+import { STOP_SEQUENCES, sanitizeAssistantText } from './ai-output.js';
+
 const providers = {
   horde: { key: null, async call(messages, timeoutMs, attempt, signal) { return callAiHorde(messages, timeoutMs, attempt, signal); } },
   pollinations: { key: null, async call(messages, timeoutMs, attempt, signal) { return callPollinations(messages, timeoutMs, attempt, signal); } },
@@ -149,7 +151,10 @@ async function callGemini(messages, timeoutMs, model, parentSignal) {
       parts: [{ text: m.content }]
     }));
     const system = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\\n');
-    const payload = { contents };
+    const payload = {
+      contents,
+      generationConfig: { stopSequences: STOP_SEQUENCES }
+    };
     if (system) payload.systemInstruction = { parts: [{ text: system }] };
     const response = await fetch(
       'https://generativelanguage.googleapis.com/v1beta/models/' +
@@ -179,21 +184,25 @@ async function callCloudflare(messages, timeoutMs, account, model, parentSignal)
     const response = await fetch(
       'https://api.cloudflare.com/client/v4/accounts/' +
         encodeURIComponent(account) +
-        '/ai/run/' +
-        encodeURIComponent(model),
+        '/ai/v1/chat/completions',
       {
         method: 'POST',
         headers: {
           authorization: 'Bearer ' + process.env.CLOUDFLARE_API_TOKEN,
           'content-type': 'application/json'
         },
-        body: JSON.stringify({ messages }),
+        body: JSON.stringify({
+          model,
+          messages,
+          stream: false,
+          stop: STOP_SEQUENCES
+        }),
         signal
       }
     );
     const json = await readJsonBounded(response);
     if (!response.ok) throw responseError(response, json, 'Cloudflare request failed');
-    const text = json?.result?.response || json?.result?.text || '';
+    const text = json?.choices?.[0]?.message?.content || json?.result?.response || json?.result?.text || '';
     if (!text) throw providerError(502, 'Cloudflare returned empty response');
     return { text, model };
   } finally {
@@ -218,6 +227,7 @@ async function callKilo(messages, timeoutMs, attempt = 1, parentSignal) {
         model,
         messages,
         stream: false,
+        stop: STOP_SEQUENCES,
         max_tokens: Math.min(Number(process.env.KILO_MAX_TOKENS || 512), 1024)
       }),
       signal
@@ -245,7 +255,7 @@ async function callPollinations(messages, timeoutMs, attempt = 1, parentSignal) 
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model, messages }),
+      body: JSON.stringify({ model, messages, stop: STOP_SEQUENCES }),
       signal
     });
     const json = await readJsonBounded(response);
@@ -286,7 +296,8 @@ async function callAiHorde(messages, timeoutMs, attempt = 1, parentSignal) {
         params: {
           max_length: Math.min(Number(process.env.AI_HORDE_MAX_LENGTH || 256), 512),
           max_context_length: Math.min(Number(process.env.AI_HORDE_MAX_CONTEXT || 4096), 8192),
-          temperature: Number(process.env.AI_HORDE_TEMPERATURE || 0.4)
+          temperature: Number(process.env.AI_HORDE_TEMPERATURE || 0.4),
+          stop_sequence: STOP_SEQUENCES
         },
         ...(model ? { models: [model] } : {})
       }),
@@ -351,12 +362,12 @@ async function callOpenAiCompatible(url, key, model, messages, timeoutMs, parent
     const response = await fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ model, messages }),
+      body: JSON.stringify({ model, messages, stop: STOP_SEQUENCES }),
       signal
     });
     const json = await readJsonBounded(response);
     if (!response.ok) throw responseError(response, json, 'Provider request failed');
-    const text = json?.choices?.[0]?.message?.content || '';
+    const text = sanitizeAssistantText(json?.choices?.[0]?.message?.content || '');
     if (!text) throw providerError(502, 'Provider returned empty response');
     return { text, model };
   } finally {
@@ -508,8 +519,13 @@ export async function generateWithFreePool({ messages, timeoutMs = 18000, signal
         });
 
         if (settled.ok) {
+          const sanitized = sanitizeAssistantText(settled.result?.text);
+          if (!sanitized) {
+            recordFailure(settled.id, providerError(502, 'Provider returned empty sanitized response'));
+            continue;
+          }
           masterController.abort();
-          return { ...settled.result, provider: settled.id };
+          return { ...settled.result, text: sanitized, provider: settled.id };
         }
       }
     }
