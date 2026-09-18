@@ -6,14 +6,14 @@ let cache = { fetchedAt: 0, events: [] };
 
 function htmlToText(html) {
   return String(html)
-    .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')
-    .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')
     .replace(/&#39;/g, "'")
     .replace(/&quot;/gi, '"')
-    .replace(/\\s+/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
@@ -27,12 +27,12 @@ export function parseCsnLatest(html) {
   const marker = text.indexOf('Últimos sismos');
   if (marker < 0) return [];
   const section = text.slice(marker, marker + 30_000);
-  const pattern = /(\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2})\\s+(.+?)\\s+(\\d+)\\s*km\\s+([0-9]+(?:[.,][0-9]+)?)/g;
+  const pattern = /(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+(.+?)\s+(\d+)\s*km\s+([0-9]+(?:[.,][0-9]+)?)/g;
   const events = [];
   let match;
   while ((match = pattern.exec(section)) && events.length < MAX_EVENTS) {
     const occurredAtLocal = match[1];
-    const place = match[2].replace(/\\s+/g, ' ').trim();
+    const place = match[2].replace(/\s+/g, ' ').trim();
     const depthKm = numberOrNull(match[3]);
     const magnitude = numberOrNull(match[4]);
     if (!place || depthKm === null || magnitude === null) continue;
