@@ -26,6 +26,8 @@ import cl.iac33.app.core.connectivity.ConnectivityMonitor
 import cl.iac33.app.core.connectivity.ConnectivityStatus
 import cl.iac33.app.core.location.LocationReader
 import cl.iac33.app.core.location.LocationSnapshot
+import cl.iac33.app.seismic.SeismicClient
+import cl.iac33.app.seismic.SeismicEvent
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -93,6 +95,7 @@ class MainActivity : ComponentActivity() {
                 ) { padding ->
                     Column(Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
                         if (selected == 0) AiPanel()
+                        else if (selected == 1) SeismicPanel()
                         else if (selected == 4) GpsPanel(location)
                         else DashboardPanel(sections[selected], connectivityStatus)
                     }
@@ -204,6 +207,55 @@ private fun GpsPanel(location: LocationSnapshot?) {
                 Text("GPS sin posición disponible", style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(8.dp))
                 Text("Concede el permiso de ubicación y vuelve a abrir esta sección.")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SeismicPanel() {
+    val scope = rememberCoroutineScope()
+    val client = remember { SeismicClient(BuildConfig.IAC33_BACKEND_URL) }
+    var events by remember { mutableStateOf<List<SeismicEvent>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun refresh() {
+        loading = true
+        error = null
+        scope.launch {
+            client.latest().onSuccess { snapshot ->
+                events = snapshot.events
+            }.onFailure { failure ->
+                error = failure.message ?: "No se pudo consultar sismicidad"
+            }
+            loading = false
+        }
+    }
+
+    LaunchedEffect(Unit) { refresh() }
+
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("Sismicidad", style = MaterialTheme.typography.headlineMedium)
+            TextButton(onClick = { refresh() }, enabled = !loading) { Text("Actualizar") }
+        }
+        Spacer(Modifier.height(8.dp))
+        if (loading && events.isEmpty()) {
+            CircularProgressIndicator()
+        } else if (error != null && events.isEmpty()) {
+            Text("Error: $error")
+        } else {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(events) { event ->
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text("M%.1f · %s".format(event.magnitude, event.place), style = MaterialTheme.typography.titleMedium)
+                            Text(event.occurredAtLocal + " · " + event.depthKm + " km")
+                            Text("Fuente: " + event.source)
+                        }
+                    }
+                }
             }
         }
     }
