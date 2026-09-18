@@ -83,7 +83,8 @@ jobs:
           SHA256="$(cat "$RUNNER_TEMP/ota-sha256")"
           SIZE="$(cat "$RUNNER_TEMP/ota-size")"
           SIGNATURE="$(cat "$RUNNER_TEMP/ota-signature.b64")"
-          jq -n             --arg releaseId "$RELEASE_ID"             --arg appVersion "$VERSION_NAME"             --arg createdAt "$CREATED_AT"             --arg artifactRef "$ARTIFACT_URL"             --arg sha "$SHA256"             --argjson size "$SIZE"             --arg signature "$SIGNATURE"             '{
+          ALGORITHM="$(cat "$RUNNER_TEMP/ota-algorithm")"
+          jq -n             --arg releaseId "$RELEASE_ID"             --arg appVersion "$VERSION_NAME"             --arg createdAt "$CREATED_AT"             --arg artifactRef "$ARTIFACT_URL"             --arg sha "$SHA256"             --argjson size "$SIZE"             --arg signature "$SIGNATURE"             --arg algorithm "$ALGORITHM"             '{
               schemaVersion:1,
               releaseId:$releaseId,
               appVersion:$appVersion,
@@ -92,9 +93,9 @@ jobs:
               artifactRef:$artifactRef,
               artifactSha256:$sha,
               artifactSize:$size,
-              algorithm:"SHA256withECDSA",
+              algorithm:$algorithm,
               signatureBase64:$signature,
-              keyId:"iac33-bridge-ecdsa-v1",
+              keyId:"iac33-android-signing-v1",
               rollbackRef:$artifactRef
             }' > manifest.json
           gh release create "$TAG" "$ARTIFACT_NAME" manifest.json             --title "IAC33 OTA $VERSION_NAME"             --notes "Signed OTA release for IAC33 commit $GITHUB_SHA."
