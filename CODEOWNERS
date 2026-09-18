@@ -1,0 +1,5 @@
+# IAC33 core ownership
+* @caggrometal-svg
+.github/workflows/* @caggrometal-svg
+app/src/main/* @caggrometal-svg
+backend/src/* @caggrometal-svg
