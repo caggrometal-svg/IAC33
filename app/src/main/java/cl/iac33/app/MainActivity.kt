@@ -59,7 +59,7 @@ class MainActivity : ComponentActivity() {
                 }
                 DisposableEffect(lifecycleOwner) {
                     val observer = LifecycleEventObserver { _, event ->
-                        if (event == Lifecycle.Event.ON_RESUME) location = locationReader.readLastKnown()
+                        if (event == Lifecycle.Event.ON_RESUME) location = locationReader.readCurrentOrLastKnown()
                     }
                     lifecycleOwner.lifecycle.addObserver(observer)
                     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
