@@ -54,9 +54,7 @@ jobs:
           BASE_VERSION="$(grep -oE 'versionName = [^\n]+' app/build.gradle.kts | head -n1 | sed -E 's/.*orElse\("([^"]+)"\).*/\1/' )"
           if [ -z "$BASE_VERSION" ]; then BASE_VERSION="$(grep -oE 'versionName = "[0-9.]+"' app/build.gradle.kts | head -n1 | sed -E 's/.*"([0-9.]+)".*/\1/' )"; fi
           test -n "$BASE_VERSION"
-          IFS=. read -r VMAJOR VMINOR VPATCH VEXTRA <<EOF
-$BASE_VERSION
-EOF
+          IFS=. read -r VMAJOR VMINOR VPATCH VEXTRA <<< "$BASE_VERSION"
           VMAJOR="${VMAJOR:-0}"; VMINOR="${VMINOR:-0}"; VPATCH="${VPATCH:-0}"
           OTA_VERSION_NAME="${VMAJOR}.${VMINOR}.${VPATCH}.${GITHUB_RUN_NUMBER}"
           echo "IAC33_VERSION_NAME=$OTA_VERSION_NAME" >> "$GITHUB_ENV"
