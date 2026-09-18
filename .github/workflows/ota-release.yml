@@ -324,19 +324,41 @@ jobs:
           OIDC_AUDIENCE: iac33-backend
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -eu
+          set -euo pipefail
           test -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN"
-          OIDC_TOKEN="$(curl --fail-with-body --silent --show-error             -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$OIDC_AUDIENCE" | jq -er '.value')"
+          test -n "$BACKEND_URL"
+
+          wait_for_ready() {
+            for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+              STATUS="$(curl --silent --show-error --output "$RUNNER_TEMP/ready.json" --write-out '%{http_code}' "$BACKEND_URL/ready" || true)"
+              if [ "$STATUS" = "200" ]; then
+                echo "IAC33 backend is ready."
+                return 0
+              fi
+              echo "Waiting for IAC33 backend readiness (attempt $attempt, HTTP $STATUS)..."
+              sleep 5
+            done
+            echo "IAC33 backend did not become ready." >&2
+            cat "$RUNNER_TEMP/ready.json" 2>/dev/null || true
+            return 1
+          }
+
+          get_oidc_token() {
+            curl --fail-with-body --silent --show-error               -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$OIDC_AUDIENCE" | jq -er '.value'
+          }
+
+          wait_for_ready
+          OIDC_TOKEN="$(get_oidc_token)"
           test -n "$OIDC_TOKEN"
+
           if [ -n "$IAC33_OTA_BOOTSTRAP_VERSION" ]; then
-            BOOTSTRAP_STATUS="$(curl --fail-with-body --silent --show-error \
-              -H "Authorization: Bearer $OIDC_TOKEN" \
-              "$BACKEND_URL/v1/gpt/ota/bootstrap-status?requiredVersion=$IAC33_OTA_BOOTSTRAP_VERSION" | jq -er '.confirmed')"
+            BOOTSTRAP_STATUS="$(curl --fail-with-body --silent --show-error               -H "Authorization: Bearer $OIDC_TOKEN"               "$BACKEND_URL/v1/gpt/ota/bootstrap-status?requiredVersion=$IAC33_OTA_BOOTSTRAP_VERSION" | jq -er '.confirmed')"
             if [ "$BOOTSTRAP_STATUS" != "true" ]; then
               echo "OTA bootstrap not yet confirmed on an installed device."
               exit 0
             fi
           fi
+
           VERSION_NAME="${IAC33_VERSION_NAME:?IAC33_VERSION_NAME is not set}"
           TAG="ota-$VERSION_NAME-$GITHUB_RUN_NUMBER"
           ARTIFACT_NAME="iac33-$TAG.apk"
@@ -350,6 +372,7 @@ jobs:
           COMMAND_ID="ota-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           IDEMPOTENCY="ota-$GITHUB_SHA"
           IDEMPOTENCY="${IDEMPOTENCY:0:40}"
+
           jq -n             --arg id "$COMMAND_ID"             --arg type "OTA_INSTALL"             --arg idempotencyKey "$IDEMPOTENCY"             --arg expiresAt "$EXPIRES_AT"             --arg releaseId "$TAG"             --arg appVersion "$VERSION_NAME"             --arg createdAt "$CREATED_AT"             --arg artifactRef "$ARTIFACT_URL"             --arg sha "$SHA256"             --argjson size "$SIZE"             --arg signature "$SIGNATURE"             --arg rollbackRef "$ROLLBACK_REF"             '{
               id:$id,
               type:$type,
@@ -372,4 +395,29 @@ jobs:
                 }
               }
             }' > ota-command.json
-          curl --fail-with-body --silent --show-error             -H "Authorization: Bearer $OIDC_TOKEN"             -H "Content-Type: application/json"             --data-binary @ota-command.json             "$BACKEND_URL/v1/gpt/commands"
+
+          for attempt in 1 2 3 4 5 6; do
+            OIDC_TOKEN="$(get_oidc_token)"
+            STATUS="$(curl --silent --show-error               --output "$RUNNER_TEMP/ota-command-response.json"               --write-out '%{http_code}'               -H "Authorization: Bearer $OIDC_TOKEN"               -H "Content-Type: application/json"               --data-binary @ota-command.json               "$BACKEND_URL/v1/gpt/commands" || true)"
+
+            if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 300 ]; then
+              cat "$RUNNER_TEMP/ota-command-response.json"
+              echo "OTA command queued."
+              exit 0
+            fi
+
+            cat "$RUNNER_TEMP/ota-command-response.json" 2>/dev/null || true
+            case "$STATUS" in
+              429|500|502|503|504)
+                echo "Transient OTA queue response HTTP $STATUS; retrying..."
+                sleep $((attempt * 5))
+                ;;
+              *)
+                echo "OTA queue failed with non-retryable HTTP $STATUS." >&2
+                exit 1
+                ;;
+            esac
+          done
+
+          echo "OTA command could not be queued after retries." >&2
+          exit 1
