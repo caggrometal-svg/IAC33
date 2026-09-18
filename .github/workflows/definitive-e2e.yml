@@ -43,13 +43,13 @@ jobs:
       E2E_BASE_URL: http://127.0.0.1:3000
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Verify production health
         run: |
           curl --fail --silent --show-error https://iac33-backend.onrender.com/health
           curl --fail --silent --show-error https://iac33-backend.onrender.com/ready
       - name: Set up Node 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
       - name: Install backend dependencies
