@@ -1,19 +1,21 @@
 package cl.iac33.app.ai
 
 import android.util.Log
+import cl.iac33.app.BuildConfig
 import cl.iac33.app.core.AiRequest
 import cl.iac33.app.core.AiResult
 import cl.iac33.app.core.OperationError
 import cl.iac33.app.core.OperationResult
-import cl.iac33.app.BuildConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
-import java.net.URL
 import java.net.URI
+import java.net.URL
+import kotlin.math.min
 
 class RemoteBackendProvider(
     private val baseUrl: String
@@ -24,53 +26,125 @@ class RemoteBackendProvider(
     override fun isAvailable(): Boolean = baseUrl.isNotBlank()
 
     override suspend fun generate(request: AiRequest): OperationResult<AiResult> = withContext(Dispatchers.IO) {
-        if (!isAvailable()) return@withContext OperationResult.Failure(OperationError.NETWORK, "Backend URL not configured")
-        val started = System.currentTimeMillis()
+        if (!isAvailable()) {
+            return@withContext OperationResult.Failure(
+                OperationError.NETWORK,
+                "Backend URL not configured"
+            )
+        }
+
+        val deadline = System.currentTimeMillis() + request.timeoutMs.coerceIn(2_000L, 45_000L)
+        var lastFailure: OperationResult.Failure? = null
+
+        for (attempt in 1..MAX_ATTEMPTS) {
+            if (System.currentTimeMillis() >= deadline) break
+            try {
+                val result = executeOnce(request, deadline)
+                if (result is OperationResult.Success) return@withContext result
+
+                lastFailure = result as OperationResult.Failure
+                if (!isRetryable(lastFailure.error) || attempt == MAX_ATTEMPTS) {
+                    return@withContext lastFailure
+                }
+
+                val remaining = deadline - System.currentTimeMillis()
+                if (remaining <= 50L) break
+                val backoff = min(
+                    1_200L,
+                    BASE_BACKOFF_MS * (1L shl (attempt - 1))
+                )
+                delay(min(backoff, remaining - 1L))
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.e(TAG, "Remote attempt $attempt failed: ${error.javaClass.simpleName}: ${error.message}")
+                lastFailure = OperationResult.Failure(
+                    if (error is java.net.SocketTimeoutException) OperationError.TIMEOUT else OperationError.NETWORK,
+                    error.message ?: "AI backend request failed"
+                )
+                if (attempt == MAX_ATTEMPTS) return@withContext lastFailure
+                val remaining = deadline - System.currentTimeMillis()
+                if (remaining <= 50L) break
+                delay(min(BASE_BACKOFF_MS * (1L shl (attempt - 1)), remaining - 1L))
+            }
+        }
+
+        lastFailure ?: OperationResult.Failure(
+            OperationError.TIMEOUT,
+            "AI backend request timed out"
+        )
+    }
+
+    private fun executeOnce(
+        request: AiRequest,
+        deadline: Long
+    ): OperationResult<AiResult> {
         var connection: HttpURLConnection? = null
+        val started = System.currentTimeMillis()
         try {
             val parsed = URI(baseUrl.trimEnd('/'))
             val secure = parsed.scheme.equals("https", ignoreCase = true)
             val localDebug = BuildConfig.DEBUG && parsed.scheme.equals("http", ignoreCase = true) &&
                 (parsed.host.equals("localhost", true) || parsed.host == "127.0.0.1" || parsed.host == "10.0.2.2")
             if (!secure && !localDebug) {
-                return@withContext OperationResult.Failure(OperationError.NETWORK, "Backend URL must use HTTPS")
+                return OperationResult.Failure(OperationError.NETWORK, "Backend URL must use HTTPS")
             }
+
+            val remaining = (deadline - System.currentTimeMillis()).coerceAtLeast(1L)
+            val timeout = min(5_000L, remaining).toInt().coerceAtLeast(1_000)
+
             connection = (URL(baseUrl.trimEnd('/') + "/v1/ai/generate").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = request.timeoutMs.toInt().coerceAtMost(45_000)
-                readTimeout = request.timeoutMs.toInt().coerceAtMost(45_000)
+                connectTimeout = timeout
+                readTimeout = timeout
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("Accept", "application/json")
+                setRequestProperty("User-Agent", "IAC33/2.0 Android")
             }
-
-            Log.d(TAG, "AI remote request start timeoutMs=" + request.timeoutMs + " messages=" + request.messages.size)
 
             val messages = JSONArray()
             request.messages.forEach { message ->
-                messages.put(JSONObject().put("role", message.role).put("content", message.content))
+                messages.put(
+                    JSONObject()
+                        .put("role", message.role)
+                        .put("content", message.content)
+                )
             }
-            val payload = JSONObject().put("conversationId", request.conversationId).put("messages", messages).put("timeoutMs", request.timeoutMs)
-            connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+
+            val payload = JSONObject()
+                .put("conversationId", request.conversationId)
+                .put("messages", messages)
+                .put("timeoutMs", timeout)
+
+            Log.d(TAG, "AI remote attempt start timeoutMs=$timeout messages=${request.messages.size}")
+
+            connection.outputStream.use {
+                it.write(payload.toString().toByteArray(Charsets.UTF_8))
+            }
 
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val raw = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             val json = if (raw.isNotBlank()) JSONObject(raw) else JSONObject()
+
             if (status !in 200..299) {
                 val error = json.optString("error", "AI backend error")
-                Log.e(TAG, "AI remote HTTP " + status + " endpoint=" + baseUrl.trimEnd('/') + "/v1/ai/generate body=" + raw.take(500))
-                val operationError = if (status == 429) OperationError.RATE_LIMIT else OperationError.PROVIDER
-                return@withContext OperationResult.Failure(operationError, "HTTP " + status + " · " + error)
+                val operationError = when {
+                    status == 408 -> OperationError.TIMEOUT
+                    status == 429 -> OperationError.RATE_LIMIT
+                    status >= 500 -> OperationError.PROVIDER
+                    else -> OperationError.NETWORK
+                }
+                return OperationResult.Failure(operationError, "HTTP $status · $error")
             }
 
-            val text = json.optString("text", "")
+            val text = AiTextSanitizer.sanitize(json.optString("text", ""))
             if (text.isBlank()) {
-                Log.e(TAG, "AI remote empty response HTTP " + status + " body=" + raw.take(500))
-                return@withContext OperationResult.Failure(OperationError.PROVIDER, "Empty AI response")
+                return OperationResult.Failure(OperationError.PROVIDER, "Empty AI response")
             }
-            Log.d(TAG, "AI remote success HTTP " + status + " provider=" + json.optString("provider") + " model=" + json.optString("model"))
-            OperationResult.Success(
+
+            return OperationResult.Success(
                 AiResult(
                     provider = json.optString("provider").ifBlank { id },
                     model = json.optString("model").ifBlank { model },
@@ -79,18 +153,27 @@ class RemoteBackendProvider(
                 )
             )
         } catch (error: CancellationException) {
-            // Compose cancellation is lifecycle control, not an AI/network failure.
             throw error
         } catch (error: Exception) {
-            Log.e(TAG, "AI remote exception " + error.javaClass.simpleName + ": " + error.message, error)
-            val operationError = if (error is java.net.SocketTimeoutException) OperationError.TIMEOUT else OperationError.NETWORK
-            OperationResult.Failure(operationError, error.message ?: "AI backend request failed")
+            Log.e(TAG, "AI remote exception ${error.javaClass.simpleName}: ${error.message}")
+            return OperationResult.Failure(
+                if (error is java.net.SocketTimeoutException) OperationError.TIMEOUT else OperationError.NETWORK,
+                error.message ?: "AI backend request failed"
+            )
         } finally {
             connection?.disconnect()
         }
     }
 
+    private fun isRetryable(error: OperationError): Boolean =
+        error == OperationError.NETWORK ||
+            error == OperationError.TIMEOUT ||
+            error == OperationError.RATE_LIMIT ||
+            error == OperationError.PROVIDER
+
     companion object {
         private const val TAG = "IAC33-AI"
+        private const val MAX_ATTEMPTS = 3
+        private const val BASE_BACKOFF_MS = 200L
     }
 }
