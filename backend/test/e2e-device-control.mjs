@@ -6,6 +6,7 @@ const baseUrl = (process.env.E2E_BASE_URL || '').replace(/\/$/, '');
 const pairingToken = process.env.DEVICE_PAIRING_TOKEN || '';
 const controlToken = process.env.CONTROL_TOKEN || '';
 const databaseUrl = process.env.DATABASE_URL || '';
+const auth = { authorization: `Bearer ${controlToken}` };
 
 for (const [name, value] of Object.entries({ E2E_BASE_URL: baseUrl, DEVICE_PAIRING_TOKEN: pairingToken, CONTROL_TOKEN: controlToken })) {
   assert.ok(value, `${name} is required`);
