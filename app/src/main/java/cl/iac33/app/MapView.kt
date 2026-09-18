@@ -102,7 +102,7 @@ function worldXY(lat,lon,z){
   return {x,y,n};
 }
 function render(){
-  map.innerHTML='<div class="panel"><div class="badge">IAC33 · mapa</div><div class="badge">'+markers.length+' puntos</div></div><div class="controls"><button onclick="setZoom(1)">+</button><button onclick="setZoom(-1)">−</button><button onclick="center()">⌖</button></div>';
+  map.innerHTML='<div class="panel"><div class="badge">IAC33 · mapa</div><div class="badge">'+markers.length+' puntos · © OpenStreetMap</div></div><div class="controls"><button onclick="setZoom(1)">+</button><button onclick="setZoom(-1)">−</button><button onclick="center()">⌖</button></div>';
   const w=map.clientWidth,h=map.clientHeight,c=worldXY(centerLat,centerLon,zoom);
   const startX=Math.floor((c.x-w/2)/256)-1,startY=Math.floor((c.y-h/2)/256)-1;
   const endX=startX+Math.ceil(w/256)+2,endY=startY+Math.ceil(h/256)+2;
