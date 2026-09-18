@@ -14,6 +14,21 @@ function restore() {
 
 test.afterEach(restore);
 
+test('sends exact prompt stop sequences to OpenAI-compatible providers', async () => {
+  process.env.AI_PROVIDER_ORDER = 'kilo';
+  let requestBody;
+  globalThis.fetch = async (_url, options) => {
+    requestBody = JSON.parse(options.body);
+    return new Response(
+      JSON.stringify({ choices: [{ message: { content: 'pong' } }] }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+  };
+
+  await router.generateWithFreePool({ messages, timeoutMs: 1000 });
+  assert.deepEqual(requestBody.stop, ['\\nUSER:', '\\nASSISTANT:']);
+});
+
 test('returns the first responding free provider', async () => {
   process.env.AI_PROVIDER_ORDER = 'kilo';
   let calls = 0;
