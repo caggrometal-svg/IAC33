@@ -1,6 +1,7 @@
 import { STOP_SEQUENCES, sanitizeAssistantText } from './ai-output.js';
 
 const providers = {
+  openai: { key: 'OPENAI_API_KEY', async call(messages, timeoutMs, _attempt, signal) { return callOpenAiCompatible('https://api.openai.com/v1/chat/completions', process.env.OPENAI_API_KEY, process.env.OPENAI_MODEL || 'gpt-4o-mini', messages, timeoutMs, signal); } },
   andrew2: { key: null, async call(messages, timeoutMs, _attempt, signal) { return callAndrew2(messages, timeoutMs, signal); } },
   ollama: { key: 'IAC33_OLLAMA_API_KEY', async call(messages, timeoutMs, _attempt, signal) { return callOllama(messages, timeoutMs, signal); } },
   anthropic: { key: 'ANTHROPIC_API_KEY', async call(messages, timeoutMs, _attempt, signal) { return callAnthropic(messages, timeoutMs, signal); } },
@@ -26,6 +27,7 @@ function providerError(status, message, retryAfterMs = 0) {
 
 const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const FREE_PROVIDER_DEFAULTS = ['andrew2', 'ollama', 'kilo', 'horde', 'pollinations'];
+const SERIAL_PREFERRED_PROVIDERS = new Set(['andrew2', 'ollama']);
 const PROVIDER_CIRCUIT_FAILURES = Math.min(Math.max(Number(process.env.AI_CIRCUIT_FAILURES || 2), 1), 5);
 const PROVIDER_CIRCUIT_OPEN_MS = Math.min(Math.max(Number(process.env.AI_CIRCUIT_OPEN_MS || 30000), 5000), 300000);
 const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024;
@@ -219,14 +221,14 @@ async function callCloudflare(messages, timeoutMs, account, model, parentSignal)
 async function callAndrew2(messages, timeoutMs, parentSignal) {
   const { signal, cleanup } = timeoutSignal(parentSignal, timeoutMs);
   try {
-    const base = String(process.env.IAC33_ANDREW2_API_URL || 'https://andrew2-api.onrender.com').replace(/\/$/, '');
+    const base = String(process.env.IAC33_ANDREW2_API_URL || 'https://andrew2-api.onrender.com').trim().replace(/\/$/, '');
     const parsed = new URL(base);
     if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== 'andrew2-api.onrender.com') {
       throw providerError(503, 'Andrew2 endpoint not trusted');
     }
     const headers = { 'content-type': 'application/json', 'x-iac33-bridge': 'IAC33/Andrew2' };
     if (process.env.IAC33_ANDREW2_API_KEY) headers.authorization = 'Bearer ' + process.env.IAC33_ANDREW2_API_KEY;
-    const response = await fetch(parsed.toString() + '/v1/ai/generate', {
+    const response = await fetch(parsed.origin + '/v1/ai/generate', {
       method: 'POST',
       headers,
       body: JSON.stringify({ messages }),
