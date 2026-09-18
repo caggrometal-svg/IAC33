@@ -13,6 +13,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URI
 import java.time.Instant
 import java.util.UUID
 
@@ -44,7 +45,21 @@ class RemoteControlEngine(
         if (!identity.enrolled) return@withContext OperationResult.Failure(OperationError.AUTH, "DEVICE_NOT_ENROLLED")
         try {
             if (BuildConfig.VERSION_NAME != pending.appVersion) {
-                return@withContext OperationResult.Failure(OperationError.PROVIDER, "OTA_VERSION_MISMATCH:${BuildConfig.VERSION_NAME}:${pending.appVersion}")
+                if (System.currentTimeMillis() < pending.expiresAtMs) {
+                    return@withContext OperationResult.Success("OTA_WAITING_FOR_INSTALL:${pending.releaseId}")
+                }
+                val failBody = JSONObject().put("detail", JSONObject()
+                    .put("message", "OTA_NOT_CONFIRMED")
+                    .put("releaseId", pending.releaseId)
+                    .put("appVersion", BuildConfig.VERSION_NAME)
+                    .put("expectedAppVersion", pending.appVersion)
+                    .put("idempotencyKey", pending.idempotencyKey))
+                val failResponse = request("/v1/device/commands/${pending.commandId}/fail", failBody.toString(), signed = true)
+                if (failResponse.first !in 200..299) {
+                    return@withContext OperationResult.Failure(OperationError.PROVIDER, failResponse.second.optString("error", "OTA fail ACK failed"))
+                }
+                pendingOta.clear()
+                return@withContext OperationResult.Failure(OperationError.VERSION, "OTA_NOT_CONFIRMED:${pending.releaseId}")
             }
             val body = JSONObject()
                 .put("detail", JSONObject()
@@ -104,7 +119,13 @@ class RemoteControlEngine(
             if (command.type.equals("OTA_INSTALL", ignoreCase = true)) {
                 val result = runCatching {
                     otaExecutor.execute(command.payload) { manifest ->
-                        check(pendingOta.save(command.id, command.idempotencyKey, manifest.releaseId, manifest.appVersion)) {
+                        check(pendingOta.save(
+                            command.id,
+                            command.idempotencyKey,
+                            manifest.releaseId,
+                            manifest.appVersion,
+                            System.currentTimeMillis() + OTA_CONFIRMATION_TIMEOUT_MS
+                        )) {
                             "OTA pending state could not be persisted"
                         }
                     }
@@ -149,6 +170,10 @@ class RemoteControlEngine(
         }
     }
 
+    companion object {
+        private const val OTA_CONFIRMATION_TIMEOUT_MS = 30 * 60 * 1000L
+    }
+
     private fun executeCommand(command: RemoteCommand): Pair<Boolean, String> = when (command.type.uppercase()) {
         "PING", "NOOP" -> true to "ACK:${command.type.uppercase()}"
         "OTA_INSTALL" -> error("OTA_INSTALL must use the dedicated OTA execution path")
@@ -159,6 +184,12 @@ class RemoteControlEngine(
         JSONObject(payload).optJSONObject("manifest")?.optString("releaseId").orEmpty()
 
     private fun request(path: String, body: String, signed: Boolean): Pair<Int, JSONObject> {
+        val parsed = URI(baseUrl.trimEnd('/') + path)
+        val secure = parsed.scheme.equals("https", ignoreCase = true)
+        val localDebug = BuildConfig.DEBUG && parsed.scheme.equals("http", ignoreCase = true) &&
+            (parsed.host.equals("localhost", true) || parsed.host == "127.0.0.1" || parsed.host == "10.0.2.2")
+        require(secure || localDebug) { "Backend URL must use HTTPS" }
+
         val timestamp = System.currentTimeMillis()
         val nonce = UUID.randomUUID().toString().replace("-", "")
         val connection = (URL(baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
