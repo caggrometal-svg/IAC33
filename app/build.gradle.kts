@@ -12,7 +12,7 @@ android {
         applicationId = "cl.iac33.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
+        versionCode = providers.gradleProperty("IAC33_VERSION_CODE").orElse("2").get().toInt()
         versionName = providers.gradleProperty("IAC33_VERSION_NAME").orElse("0.1.1").get()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
