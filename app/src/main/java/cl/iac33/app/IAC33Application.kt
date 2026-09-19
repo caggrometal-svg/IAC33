@@ -17,10 +17,20 @@ class IAC33Application : Application() {
     override fun onCreate() {
         super.onCreate()
         context = applicationContext
-        IAC33Runtime.initialize(applicationContext)
+        if (!startupWorkersDisabled()) {
+            IAC33Runtime.initialize(applicationContext)
+        }
     }
 
+    private fun startupWorkersDisabled(): Boolean =
+        runCatching {
+            packageManager.getApplicationInfo(packageName, android.content.pm.PackageManager.GET_META_DATA)
+                .metaData?.getBoolean(META_DISABLE_STARTUP_WORKERS, false) == true
+        }.getOrDefault(false)
+
     companion object {
+        const val META_DISABLE_STARTUP_WORKERS = "cl.iac33.app.DISABLE_STARTUP_WORKERS"
+
         @Volatile
         private var context: Context? = null
 
