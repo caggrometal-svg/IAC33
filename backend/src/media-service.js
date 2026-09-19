@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { mediaPersistenceEnabled, persistAsset, readPersistedAsset, persistMediaJob, readPersistedJob, markInterruptedMediaJobs } from './media-storage.js';
 
 const ROOT = path.resolve(process.env.IAC33_MEDIA_ROOT || path.join(os.tmpdir(), 'iac33-media'));
 const MAX_ASSET_BYTES = 25 * 1024 * 1024;
@@ -99,12 +100,18 @@ async function saveAsset(buffer, mimeType, extension) {
   if (!Buffer.isBuffer(buffer) || buffer.length === 0 || buffer.length > MAX_ASSET_BYTES) {
     throw providerError(502, 'Invalid generated asset', 'INVALID_MEDIA_ASSET');
   }
-  await ensureRoot();
   const id = crypto.randomUUID();
+  const createdAt = Date.now();
+  if (mediaPersistenceEnabled()) {
+    const persisted = await persistAsset({ id, buffer, mimeType, extension, createdAt });
+    assets.set(id, { filePath: null, mimeType, createdAt, persistent: true, objectKey: persisted.objectKey });
+    return { id, filePath: null, mimeType };
+  }
+  await ensureRoot();
   const filename = id + '.' + extension.replace(/^\./, '');
   const filePath = path.join(ROOT, filename);
   await fs.writeFile(filePath, buffer, { mode: 0o600 });
-  assets.set(id, { filePath, mimeType, createdAt: Date.now() });
+  assets.set(id, { filePath, mimeType, createdAt, persistent: false });
   return { id, filePath, mimeType };
 }
 
@@ -130,12 +137,15 @@ function scheduleMediaJobs() {
     mediaRunning += 1;
     next.status = 'RUNNING';
     next.updatedAt = Date.now();
+    void persistMediaJob(next);
 
     Promise.resolve()
       .then(worker)
       .catch((error) => {
         next.status = 'FAILED';
+        next.errorCode = error?.code || 'MEDIA_JOB_ERROR';
         next.updatedAt = Date.now();
+        void persistMediaJob(next);
         console.error('IAC33 media job failed:', error?.code || 'MEDIA_JOB_ERROR');
       })
       .finally(() => {
@@ -146,7 +156,7 @@ function scheduleMediaJobs() {
   }
 }
 
-function enqueueMediaJob(job, worker) {
+async function enqueueMediaJob(job, worker) {
   cleanupExpiredMediaJobs();
   const activeOrQueued = [...jobs.values()].filter((item) =>
     item.status === 'QUEUED' || item.status === 'RUNNING'
@@ -154,6 +164,7 @@ function enqueueMediaJob(job, worker) {
   if (activeOrQueued >= MEDIA_MAX_ACTIVE_OR_QUEUED) {
     throw providerError(503, 'Multimedia queue is busy', 'MEDIA_QUEUE_BUSY');
   }
+  await persistMediaJob(job);
   jobs.set(job.id, job);
   mediaWorkers.set(job.id, worker);
   scheduleMediaJobs();
@@ -373,7 +384,9 @@ async function generateVideoToVideoJob(prompt, videoData, ratio, duration) {
       }
     }
     job.status = 'FAILED';
+    job.errorCode = lastError?.code || 'MEDIA_PROVIDERS_UNAVAILABLE';
     job.updatedAt = Date.now();
+    await persistMediaJob(job);
     throw lastError || providerError(503, 'No video-to-video provider available', 'MEDIA_PROVIDERS_UNAVAILABLE');
   });
 }
@@ -469,7 +482,9 @@ async function generateVideoJob(kind, prompt, imageData, ratio, duration) {
       }
     }
     job.status = 'FAILED';
+    job.errorCode = lastError?.code || 'MEDIA_PROVIDERS_UNAVAILABLE';
     job.updatedAt = Date.now();
+    await persistMediaJob(job);
     throw lastError || providerError(503, 'No video provider available', 'MEDIA_PROVIDERS_UNAVAILABLE');
   });
 }
@@ -569,25 +584,30 @@ export async function textToSpeech(input) {
   return { assetId: asset.id, mimeType: asset.mimeType, provider: result.provider };
 }
 
-export function getJob(id) {
-  return jobs.get(id) || null;
+export async function getJob(id) {
+  return jobs.get(id) || await readPersistedJob(id);
 }
 
 export async function readAsset(id) {
   const asset = assets.get(id);
-  if (!asset) return null;
-  try {
-    const stat = await fs.stat(asset.filePath);
-    if (Date.now() - asset.createdAt > ASSET_TTL_MS) {
-      await fs.rm(asset.filePath, { force: true });
+  if (asset?.filePath) {
+    try {
+      const stat = await fs.stat(asset.filePath);
+      if (Date.now() - asset.createdAt > ASSET_TTL_MS) {
+        await fs.rm(asset.filePath, { force: true });
+        assets.delete(id);
+        return null;
+      }
+      return { ...asset, size: stat.size, data: await fs.readFile(asset.filePath) };
+    } catch {
       assets.delete(id);
-      return null;
     }
-    return { ...asset, size: stat.size, data: await fs.readFile(asset.filePath) };
-  } catch {
-    assets.delete(id);
-    return null;
   }
+  if (mediaPersistenceEnabled()) {
+    const persisted = await readPersistedAsset(id);
+    if (persisted) return persisted;
+  }
+  return null;
 }
 
 export function cleanupExpiredMedia() {
@@ -604,3 +624,8 @@ export function cleanupExpiredMedia() {
 setInterval(cleanupExpiredMedia, 15 * 60 * 1000).unref();
 
 export { assetUrl, jobPublic };
+
+
+void markInterruptedMediaJobs().catch((error) => {
+  if (mediaPersistenceEnabled()) console.error('IAC33 media persistence startup check failed:', error?.message || error);
+});
