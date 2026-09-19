@@ -195,23 +195,24 @@ export async function generateHedged({
           .then((result) => ({ ok: true, id, result }))
           .catch((error) => ({ ok: false, id, error }))
       );
-      let nextPending = pending.map((promise, index) =>
-        promise.then((result) => ({ ...result, index }))
-      );
+      let nextPending = pending.map((promise, index) => ({
+        index,
+        promise: promise.then((result) => ({ ...result, index }))
+      }));
 
       const failures = [];
       while (nextPending.length) {
         if (controller.signal.aborted && (signal?.aborted || Date.now() >= deadline)) {
           throw abortError();
         }
-        const settled = await Promise.race(nextPending);
+        const settled = await Promise.race(nextPending.map((item) => item.promise));
         if (settled.ok) {
           winnerSelected = true;
           controller.abort();
           return settled.result;
         }
         failures.push(settled);
-        nextPending = nextPending.filter((_promise, index) => index !== settled.index);
+        nextPending = nextPending.filter((item) => item.index !== settled.index);
       }
 
       if (failures.length) {
