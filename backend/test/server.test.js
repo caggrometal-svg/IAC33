@@ -41,7 +41,7 @@ test('AI diagnostics route exposes the in-memory provider health state', async (
     assert.equal(response.status, 200);
     const body = await response.json();
     assert.equal(body.ok, true);
-    assert.equal(body.router, 'sequential-cascade');
+    assert.equal(body.router, 'hedged-failover');
     assert.ok(body.providers && typeof body.providers === 'object');
   });
 });
