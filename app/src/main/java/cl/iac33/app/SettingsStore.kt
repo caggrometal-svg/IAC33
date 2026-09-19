@@ -2,6 +2,8 @@ package cl.iac33.app
 
 import android.content.Context
 
+private const val DEFAULT_ACCENT = "#4F46E5"
+
 data class AppSettings(
     val aiLocalFirst: Boolean = false,
     val seismicAutoRefresh: Boolean = true,
@@ -48,8 +50,6 @@ class SettingsStore(context: Context) {
         private const val KEY_MAP_ZOOM = "map_zoom"
         private const val KEY_HAPTICS = "haptics"
         private const val KEY_ACCENT_COLOR = "accent_color_hex"
-        private const val DEFAULT_ACCENT = "#4F46E5"
-
         private fun normalizeAccent(value: String): String {
             val candidate = value.trim().uppercase()
             return if (Regex("^#[0-9A-F]{6}$").matches(candidate)) candidate else DEFAULT_ACCENT
