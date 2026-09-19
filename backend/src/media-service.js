@@ -377,6 +377,7 @@ async function generateVideoToVideoJob(prompt, videoData, ratio, duration) {
         job.assetId = asset.id;
         job.status = 'SUCCEEDED';
         job.updatedAt = Date.now();
+        await persistMediaJob(job);
         return;
       } catch (error) {
         lastError = error;
