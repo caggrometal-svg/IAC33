@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { server } from './server.js';
 import { Pool } from 'pg';
+import { markInterruptedMediaJobs } from './media-storage.js';
 
 const port = Number(process.env.PORT || 3000);
 const databaseUrl = process.env.DATABASE_URL || '';
@@ -65,6 +66,7 @@ async function warmDatabase() {
       await startupPool.query({ text: 'SELECT 1', statement_timeout: STARTUP_DB_TIMEOUT_MS });
       await ensureDatabaseSchema();
       await startupPool.query({ text: 'SELECT 1', statement_timeout: STARTUP_DB_TIMEOUT_MS });
+      await markInterruptedMediaJobs();
       console.log(`IAC33 database ready and schema verified on startup attempt ${attempt}`);
       return;
     } catch (error) {
