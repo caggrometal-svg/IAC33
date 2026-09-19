@@ -5,28 +5,53 @@ REPORT_DIR="app/build/iac33-connected-e2e"
 mkdir -p "$REPORT_DIR"
 exec > >(tee "$REPORT_DIR/console.log") 2>&1
 
+ADB_DEVICE="${ANDROID_SERIAL:-}"
+
+log() {
+  echo "[$(date -u +%H:%M:%S)] $*"
+}
+
+resolve_adb_device() {
+  if [[ -n "$ADB_DEVICE" ]]; then
+    return 0
+  fi
+
+  ADB_DEVICE="$(adb devices | awk '$1 ~ /^emulator-[0-9]+$/ {print $1; exit}')"
+  [[ -n "$ADB_DEVICE" ]]
+}
+
+adb_cmd() {
+  adb -s "$ADB_DEVICE" "$@"
+}
+
 diagnostics() {
   adb devices || true
-  adb -s emulator-5554 get-state || true
-  adb -s emulator-5554 shell getprop sys.boot_completed || true
-  adb -s emulator-5554 shell getprop ro.build.version.sdk || true
-  adb -s emulator-5554 logcat -d -t 500 > "$REPORT_DIR/logcat.txt" 2>/dev/null || true
-  adb -s emulator-5554 shell dumpsys activity activities > "$REPORT_DIR/activity.txt" 2>/dev/null || true
-  adb -s emulator-5554 shell dumpsys package cl.iac33.app > "$REPORT_DIR/package.txt" 2>/dev/null || true
+  if [[ -n "$ADB_DEVICE" ]]; then
+    adb_cmd get-state || true
+    adb_cmd shell getprop sys.boot_completed || true
+    adb_cmd shell getprop ro.build.version.sdk || true
+    adb_cmd logcat -d -t 500 > "$REPORT_DIR/logcat.txt" 2>/dev/null || true
+    adb_cmd shell dumpsys activity activities > "$REPORT_DIR/activity.txt" 2>/dev/null || true
+    adb_cmd shell dumpsys package cl.iac33.app > "$REPORT_DIR/package.txt" 2>/dev/null || true
+    adb_cmd shell dumpsys package cl.iac33.app.test > "$REPORT_DIR/test-package.txt" 2>/dev/null || true
+  fi
 }
 
 wait_for_android() {
   local deadline=$((SECONDS + 120))
   while (( SECONDS < deadline )); do
-    local state
-    state="$(adb -s emulator-5554 get-state 2>/dev/null || true)"
-    if [[ "$state" == "device" ]]; then
-      if adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | grep -q '^1$'; then
-        return 0
+    resolve_adb_device || true
+    if [[ -n "$ADB_DEVICE" ]]; then
+      local state
+      state="$(adb_cmd get-state 2>/dev/null || true)"
+      if [[ "$state" == "device" ]]; then
+        if adb_cmd shell getprop sys.boot_completed 2>/dev/null | grep -q '^1$'; then
+          return 0
+        fi
+      elif [[ "$state" == "offline" || "$state" == "unauthorized" ]]; then
+        adb reconnect offline >/dev/null 2>&1 || true
+        adb reconnect device >/dev/null 2>&1 || true
       fi
-    elif [[ "$state" == "offline" || "$state" == "unauthorized" ]]; then
-      adb reconnect offline >/dev/null 2>&1 || true
-      adb reconnect device >/dev/null 2>&1 || true
     fi
     sleep 2
   done
@@ -36,18 +61,18 @@ wait_for_android() {
 }
 
 configure_verifier() {
-  adb -s emulator-5554 shell settings put global verifier_verify_adb_installs 0 || true
-  adb -s emulator-5554 shell settings put global package_verifier_enable 0 || true
-  adb -s emulator-5554 shell settings put global package_verifier_user_consent 1 || true
-  adb -s emulator-5554 shell settings put global verifier_timeout 120000 || true
-  adb -s emulator-5554 shell settings put global streaming_verifier_timeout 120000 || true
-  adb -s emulator-5554 shell settings put global app_integrity_verification_timeout 120000 || true
+  adb_cmd shell settings put global verifier_verify_adb_installs 0 || true
+  adb_cmd shell settings put global package_verifier_enable 0 || true
+  adb_cmd shell settings put global package_verifier_user_consent 1 || true
+  adb_cmd shell settings put global verifier_timeout 120000 || true
+  adb_cmd shell settings put global streaming_verifier_timeout 120000 || true
+  adb_cmd shell settings put global app_integrity_verification_timeout 120000 || true
 }
 
 run_instrumented() {
   local class_name="$1"
-  echo "=== Running $class_name ==="
-  timeout 150s adb -s emulator-5554 shell am instrument -w -r \
+  log "=== Running $class_name ==="
+  timeout 90s adb -s "$ADB_DEVICE" shell am instrument -w -r \
     -e class "$class_name" \
     cl.iac33.app.test/androidx.test.runner.AndroidJUnitRunner
 }
@@ -57,25 +82,26 @@ trap 'status=$?; if [[ $status -ne 0 ]]; then echo "=== Connected E2E diagnostic
 wait_for_android
 configure_verifier
 
-echo "SDK:"
-adb -s emulator-5554 shell getprop ro.build.version.sdk
-echo "Devices:"
+log "SDK:"
+adb_cmd shell getprop ro.build.version.sdk
+log "Device:"
 adb devices
 
-echo "Installing target APK..."
-timeout 90s adb -s emulator-5554 install -r -t app/build/outputs/apk/debug/app-debug.apk
-
+TARGET_APK="app/build/outputs/apk/debug/app-debug.apk"
 TEST_APK="app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
-if [[ ! -f "$TEST_APK" ]]; then
-  echo "Missing instrumentation APK: $TEST_APK" >&2
-  exit 1
-fi
 
-echo "Installing instrumentation APK..."
-timeout 90s adb -s emulator-5554 install -r -t "$TEST_APK"
+test -s "$TARGET_APK"
+test -s "$TEST_APK"
 
-adb -s emulator-5554 shell pm clear cl.iac33.app >/dev/null 2>&1 || true
+log "Installing target APK..."
+timeout 90s adb -s "$ADB_DEVICE" install -r -t "$TARGET_APK"
 
+log "Installing instrumentation APK..."
+timeout 90s adb -s "$ADB_DEVICE" install -r -t "$TEST_APK"
+
+# Do not clear app data here: DeviceIdentity couples the Android Keystore key
+# with local identity metadata. A data-only clear can invalidate that pairing
+# and turn an otherwise valid E2E into a false failure.
 run_instrumented "cl.iac33.app.MainActivitySmokeTest"
 run_instrumented "cl.iac33.app.control.DeviceControlE2ETest"
 
