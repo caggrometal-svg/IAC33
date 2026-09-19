@@ -1,6 +1,6 @@
 import { STOP_SEQUENCES, sanitizeAssistantText } from './ai-output.js';
 import { providerHealth } from './ai/provider-health.ts';
-import { generateSequential } from './ai/router.ts';
+import { generateHedged } from './ai/router.ts';
 
 const providers = {
   openai: { key: 'OPENAI_API_KEY', async call(messages, timeoutMs, _attempt, signal) { return callOpenAiCompatible('https://api.openai.com/v1/chat/completions', process.env.OPENAI_API_KEY, process.env.OPENAI_MODEL || 'gpt-4o-mini', messages, timeoutMs, signal); } },
@@ -26,7 +26,7 @@ function providerError(status, message, retryAfterMs = 0) {
   return error;
 }
 
-const FREE_PROVIDER_DEFAULTS = ['gemini', 'groq', 'openrouter', 'deepseek', 'cloudflare', 'kilo', 'horde', 'pollinations', 'animica', 'ollama'];
+const FREE_PROVIDER_DEFAULTS = ['kilo', 'ollama', 'gemini', 'groq', 'openrouter', 'cloudflare', 'deepseek', 'pollinations', 'horde', 'animica', 'anthropic', 'xai', 'openai'];
 const parseList = (value, fallback) => String(value || fallback).split(',').map((item) => item.trim()).filter(Boolean);
 const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024;
 
@@ -422,13 +422,14 @@ export async function generateWithFreePool({ messages, timeoutMs = 30000, signal
     parseList(process.env.AI_PROVIDER_ORDER, FREE_PROVIDER_DEFAULTS.join(','))
   )];
 
-  return generateSequential({
+  return generateHedged({
     messages,
     timeoutMs,
     signal,
     order,
     providers,
     health: providerHealth,
-    providerTimeoutMs
+    providerTimeoutMs,
+    maxParallel: process.env.AI_MAX_PARALLEL_PROVIDERS || 2
   });
 }
