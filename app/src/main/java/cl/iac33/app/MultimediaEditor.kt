@@ -204,6 +204,19 @@ fun MultimediaPanel() {
                     status = status,
                     onOpen = { mediaPicker.launch(arrayOf("image/*", "video/*")) },
                     onAudio = { audioPicker.launch(arrayOf("audio/*")) },
+                    onExtractAudio = {
+                        val uri = source ?: return@EditorStudio
+                        if (sourceKind == StudioMediaKind.VIDEO) {
+                            exportBusy = true
+                            status = "Extrayendo audio…"
+                            scope.launch {
+                                runCatching { engine.extractAudio(uri) }
+                                    .onSuccess { status = "Audio guardado: " + it.displayName; Toast.makeText(context, "Audio guardado en Música/IAC33", Toast.LENGTH_LONG).show() }
+                                    .onFailure { status = "Error de audio"; Toast.makeText(context, it.message ?: "No se pudo extraer el audio", Toast.LENGTH_LONG).show() }
+                                exportBusy = false
+                            }
+                        }
+                    },
                     onStartMs = { startMs = it },
                     onEndMs = { endMs = it },
                     onBrightness = { brightness = it },
@@ -251,7 +264,7 @@ fun MultimediaPanel() {
                             status = "Procesando imagen…"
                             scope.launch {
                                 val result = runCatching {
-                                    engine.saveImage(uri, brightness, contrast, saturation, filter)
+                                    engine.saveImage(source = uri, brightness = brightness, contrast = contrast, saturation = saturation, filter = filter, aspect = aspect, textOverlay = overlayText.takeIf { it.isNotBlank() }?.let { TextOverlaySpec(it) })
                                 }
                                 exportBusy = false
                                 result.onSuccess {
@@ -329,6 +342,7 @@ private fun EditorStudio(
     status: String,
     onOpen: () -> Unit,
     onAudio: () -> Unit,
+    onExtractAudio: () -> Unit,
     onStartMs: (Long) -> Unit,
     onEndMs: (Long) -> Unit,
     onBrightness: (Float) -> Unit,
@@ -518,6 +532,7 @@ private fun EditorStudio(
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = onAudio) { Text(if (audioUri == null) "Añadir audio" else "Cambiar audio") }
+                    if (sourceKind == StudioMediaKind.VIDEO) OutlinedButton(onClick = onExtractAudio, enabled = !exportBusy) { Text("Extraer audio") }
                     Button(onClick = onExport, enabled = source != null && !exportBusy) {
                         Text(if (exportBusy) "Exportando \${exportProgress}%" else "Exportar a galería")
                     }
@@ -527,7 +542,7 @@ private fun EditorStudio(
 
         Spacer(Modifier.height(4.dp))
         Text(
-            "Procesamiento local · Media3 Transformer · exportación MP4/AAC",
+            if (sourceKind == StudioMediaKind.IMAGE) "Procesamiento local · recorte + redimensionado + ajustes + filtros + texto · PNG" else "Procesamiento local · Media3 Transformer · exportación MP4/AAC",
             style = MaterialTheme.typography.labelSmall
         )
     }
