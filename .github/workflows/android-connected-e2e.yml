@@ -33,7 +33,7 @@ jobs:
 
       - name: Run Android unit tests and build
         timeout-minutes: 4
-        run: gradle testDebugUnitTest assembleDebug --parallel --build-cache --no-daemon --console=plain
+        run: gradle testDebugUnitTest assembleDebug assembleDebugAndroidTest --parallel --build-cache --no-daemon --console=plain
 
       - name: Run Android connected E2E
         timeout-minutes: 10
@@ -60,11 +60,11 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Upload connected test report
+      - name: Upload connected E2E diagnostics
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: iac33-connected-test-report
-          path: app/build/reports/androidTests/connected/**
+          name: iac33-connected-e2e-diagnostics
+          path: app/build/iac33-connected-e2e/**
           if-no-files-found: warn
           retention-days: 7
