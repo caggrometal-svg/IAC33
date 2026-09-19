@@ -20,7 +20,8 @@ export function shouldSearchWeb(messages = []) {
   const text = lastUserText(messages);
   if (text.length < 12) return false;
   if (NEWS_MARKERS.test(text) || SEISMIC_MARKERS.test(text)) return true;
-  return WEB_MARKERS.some((pattern) => pattern.test(text)) || text.endsWith('?');
+  const questionSearch = String(process.env.AI_WEB_SEARCH_QUESTIONS || 'false').toLowerCase() === 'true';
+  return WEB_MARKERS.some((pattern) => pattern.test(text)) || (questionSearch && text.endsWith('?'));
 }
 
 function normalizeQuery(text) {
@@ -185,10 +186,12 @@ export async function fetchWebContext(messages = [], timeoutMs = WEB_TIMEOUT_MS)
   if (NEWS_MARKERS.test(query)) tasks.push(fetchGoogleNews(query));
   if (SEISMIC_MARKERS.test(query)) tasks.push(fetchUsEarthquakeFeed());
 
-  const results = await Promise.race([
-    Promise.allSettled(tasks),
-    new Promise((resolve) => setTimeout(() => resolve([]), timeoutMs))
-  ]);
+  const results = await Promise.allSettled(tasks.map((task) =>
+    Promise.race([
+      task,
+      new Promise((resolve) => setTimeout(() => resolve([]), timeoutMs))
+    ])
+  ));
 
   const flattened = Array.isArray(results)
     ? results.flatMap((result) => result?.status === 'fulfilled' ? result.value : [])

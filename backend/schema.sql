@@ -64,3 +64,24 @@ CREATE TABLE IF NOT EXISTS device_nonces (
   PRIMARY KEY (device_id, nonce)
 );
 CREATE INDEX IF NOT EXISTS device_nonces_expiry_idx ON device_nonces(expires_at);
+
+CREATE TABLE IF NOT EXISTS media_assets (
+  id TEXT PRIMARY KEY,
+  object_key TEXT NOT NULL UNIQUE,
+  mime_type TEXT NOT NULL,
+  size_bytes BIGINT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS media_assets_created_idx ON media_assets(created_at);
+
+CREATE TABLE IF NOT EXISTS media_jobs (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  provider TEXT,
+  asset_id TEXT,
+  error_code TEXT,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS media_jobs_status_idx ON media_jobs(status, created_at);

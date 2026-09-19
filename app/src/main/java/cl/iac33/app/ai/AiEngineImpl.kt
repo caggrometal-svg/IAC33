@@ -1,3 +1,4 @@
+
 package cl.iac33.app.ai
 
 import cl.iac33.app.BuildConfig
@@ -14,15 +15,19 @@ class AiEngineImpl(
 
     constructor(localFirst: Boolean) : this(defaultEngine(localFirst))
 
-    override suspend fun generate(request: AiRequest): OperationResult<AiResult> {
-        if (
-            request.messages.isEmpty() ||
-            request.messages.size > MAX_MESSAGES ||
+    override suspend fun generateStreaming(request: AiRequest, onDelta: suspend (String) -> Unit): OperationResult<AiResult> {
+        if (request.messages.isEmpty() || request.messages.size > MAX_MESSAGES ||
             request.messages.all { it.content.isBlank() } ||
             request.messages.any { it.content.length > MAX_MESSAGE_CHARS }
-        ) {
-            return OperationResult.Failure(OperationError.VALIDATION, "Solicitud IA fuera de límites")
-        }
+        ) return OperationResult.Failure(OperationError.VALIDATION, "Solicitud IA fuera de límites")
+        return engine.generateStreaming(request, onDelta)
+    }
+
+    override suspend fun generate(request: AiRequest): OperationResult<AiResult> {
+        if (request.messages.isEmpty() || request.messages.size > MAX_MESSAGES ||
+            request.messages.all { it.content.isBlank() } ||
+            request.messages.any { it.content.length > MAX_MESSAGE_CHARS }
+        ) return OperationResult.Failure(OperationError.VALIDATION, "Solicitud IA fuera de límites")
         return engine.generate(request)
     }
 

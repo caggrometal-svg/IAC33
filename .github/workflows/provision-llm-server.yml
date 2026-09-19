@@ -110,6 +110,7 @@ jobs:
           REGION: ${{ steps.capacity.outputs.region }}
         run: |
           set -euo pipefail
+          verified=0
           for attempt in $(seq 1 60); do
             response="$(curl -fsS --retry 2 -H "Authorization: Bearer $LAMBDA_API_KEY" "$LAMBDA_API_BASE/instances/$INSTANCE_ID" || true)"
             ip="$(jq -r '.data.ip // empty' <<<"$response")"
@@ -145,7 +146,13 @@ jobs:
               echo "region=$REGION"
               echo "GPU=$LAMBDA_GPU_TYPE"
               echo "IAC33_LLM_STATUS=ready"
+              verified=1
               break
             fi
             sleep 10
           done
+
+          if [[ "$verified" != "1" ]]; then
+            echo "ERROR: LLM instance was not verified successfully."
+            exit 1
+          fi

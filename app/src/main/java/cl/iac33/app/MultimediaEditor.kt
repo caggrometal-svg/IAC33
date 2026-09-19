@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -77,6 +78,7 @@ import cl.iac33.app.multimedia.ExportRequest
 import cl.iac33.app.multimedia.MediaExportEngine
 import cl.iac33.app.multimedia.MediaFilter
 import cl.iac33.app.multimedia.TextOverlaySpec
+import cl.iac33.app.multimedia.TimelineExportClip
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -98,6 +100,14 @@ private data class TimelineLayer(
     val uri: Uri? = null
 )
 
+private data class TimelineClipState(
+    val id: String,
+    val uri: Uri,
+    val name: String,
+    val startMs: Long = 0L,
+    val endMs: Long? = null
+)
+
 @OptIn(UnstableApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun MultimediaPanel() {
@@ -109,6 +119,9 @@ fun MultimediaPanel() {
     var source by remember { mutableStateOf<Uri?>(null) }
     var sourceKind by remember { mutableStateOf<StudioMediaKind?>(null) }
     var joinSources by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    var timelineClips by remember { mutableStateOf<List<TimelineClipState>>(emptyList()) }
+    var selectedClipIndex by remember { mutableIntStateOf(0) }
+    var playheadMs by remember { mutableLongStateOf(0L) }
     var audioUri by remember { mutableStateOf<Uri?>(null) }
     var startMs by remember { mutableLongStateOf(0L) }
     var endMs by remember { mutableLongStateOf(Long.MAX_VALUE) }
@@ -141,6 +154,22 @@ fun MultimediaPanel() {
         runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
         source = uri
         val mime = context.contentResolver.getType(uri).orEmpty()
+        if (mime.startsWith("video/")) {
+            val clipDuration = readDurationMs(context, uri)
+            timelineClips = listOf(
+                TimelineClipState(
+                    id = java.util.UUID.randomUUID().toString(),
+                    uri = uri,
+                    name = "Clip 1",
+                    startMs = 0L,
+                    endMs = clipDuration.takeIf { it > 0L }
+                )
+            )
+            selectedClipIndex = 0
+        } else {
+            timelineClips = emptyList()
+            selectedClipIndex = 0
+        }
         sourceKind = if (mime.startsWith("image/")) StudioMediaKind.IMAGE else StudioMediaKind.VIDEO
         durationMs = if (sourceKind == StudioMediaKind.VIDEO) readDurationMs(context, uri) else 0L
         startMs = 0L
@@ -156,8 +185,28 @@ fun MultimediaPanel() {
         uris.forEach { uri ->
             runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
         }
-        joinSources = uris
-        status = uris.size.toString() + " vídeos preparados para unir"
+        val incoming = uris.mapIndexed { index, item ->
+            TimelineClipState(
+                id = java.util.UUID.randomUUID().toString(),
+                uri = item,
+                name = "Clip " + (timelineClips.size + index + 1),
+                startMs = 0L,
+                endMs = readDurationMs(context, item).takeIf { it > 0L }
+            )
+        }
+        timelineClips = (timelineClips + incoming).take(32)
+        if (timelineClips.isNotEmpty()) {
+            selectedClipIndex = (timelineClips.size - incoming.size).coerceAtLeast(0)
+            val selected = timelineClips[selectedClipIndex]
+            source = selected.uri
+            sourceKind = StudioMediaKind.VIDEO
+            durationMs = readDurationMs(context, selected.uri)
+            startMs = selected.startMs
+            endMs = selected.endMs ?: durationMs
+            playheadMs = startMs
+        }
+        joinSources = timelineClips.map { it.uri }
+        status = timelineClips.size.toString() + " clips en la línea de tiempo"
     }
 
     val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -165,6 +214,78 @@ fun MultimediaPanel() {
         runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
         audioUri = uri
         status = "Pista secundaria cargada"
+    }
+
+    fun selectTimelineClip(index: Int) {
+        val clip = timelineClips.getOrNull(index) ?: return
+        selectedClipIndex = index
+        source = clip.uri
+        sourceKind = StudioMediaKind.VIDEO
+        durationMs = readDurationMs(context, clip.uri)
+        startMs = clip.startMs
+        endMs = clip.endMs ?: durationMs
+        playheadMs = startMs
+    }
+
+    fun updateSelectedClipRange(nextStart: Long? = null, nextEnd: Long? = null) {
+        val clip = timelineClips.getOrNull(selectedClipIndex) ?: return
+        val duration = durationMs.coerceAtLeast(1L)
+        val start = (nextStart ?: startMs).coerceIn(0L, duration - 1L)
+        val end = (nextEnd ?: endMs).coerceIn(start + 1L, duration)
+        startMs = start
+        endMs = end
+        timelineClips = timelineClips.mapIndexed { index, item ->
+            if (index == selectedClipIndex) item.copy(startMs = start, endMs = end) else item
+        }
+        playheadMs = playheadMs.coerceIn(start, end)
+    }
+
+    fun splitSelectedClip() {
+        val clip = timelineClips.getOrNull(selectedClipIndex) ?: return
+        val start = clip.startMs
+        val end = clip.endMs ?: durationMs
+        val cut = playheadMs.coerceIn(start + 1L, end - 1L)
+        if (end - start < 2_000L || cut <= start || cut >= end) {
+            status = "El playhead no permite dividir este clip"
+            return
+        }
+        val first = clip.copy(name = clip.name + " A", endMs = cut)
+        val second = clip.copy(
+            id = java.util.UUID.randomUUID().toString(),
+            name = clip.name + " B",
+            startMs = cut,
+            endMs = end
+        )
+        timelineClips = timelineClips.toMutableList().apply {
+            removeAt(selectedClipIndex)
+            add(selectedClipIndex, second)
+            add(selectedClipIndex, first)
+        }
+        selectedClipIndex += 1
+        selectTimelineClip(selectedClipIndex)
+        status = "Clip dividido en " + formatDuration(cut)
+    }
+
+    fun moveTimelineClip(delta: Int) {
+        val target = selectedClipIndex + delta
+        if (target !in timelineClips.indices) return
+        timelineClips = timelineClips.toMutableList().apply {
+            val item = removeAt(selectedClipIndex)
+            add(target, item)
+        }
+        selectedClipIndex = target
+        status = "Clip reordenado"
+    }
+
+    fun deleteTimelineClip() {
+        if (timelineClips.size <= 1) {
+            status = "La línea de tiempo necesita al menos un clip"
+            return
+        }
+        timelineClips = timelineClips.toMutableList().apply { removeAt(selectedClipIndex) }
+        selectedClipIndex = selectedClipIndex.coerceAtMost(timelineClips.lastIndex)
+        selectTimelineClip(selectedClipIndex)
+        status = "Clip eliminado"
     }
 
     Scaffold(
@@ -212,6 +333,9 @@ fun MultimediaPanel() {
                     aspect = aspect,
                     overlayText = overlayText,
                     layers = layers,
+                    timelineClips = timelineClips,
+                    selectedClipIndex = selectedClipIndex,
+                    playheadMs = playheadMs,
                     exportBusy = exportBusy,
                     exportProgress = exportProgress,
                     status = status,
@@ -233,8 +357,14 @@ fun MultimediaPanel() {
                             }
                         }
                     },
-                    onStartMs = { startMs = it },
-                    onEndMs = { endMs = it },
+                    onStartMs = { updateSelectedClipRange(nextStart = it) },
+                    onEndMs = { updateSelectedClipRange(nextEnd = it) },
+                    onPlayheadMs = { playheadMs = it.coerceIn(startMs, endMs.coerceAtMost(durationMs)) },
+                    onSelectClip = ::selectTimelineClip,
+                    onSplitClip = ::splitSelectedClip,
+                    onMoveClipUp = { moveTimelineClip(-1) },
+                    onMoveClipDown = { moveTimelineClip(1) },
+                    onDeleteClip = ::deleteTimelineClip,
                     onBrightness = { brightness = it },
                     onContrast = { contrast = it },
                     onSaturation = { saturation = it },
@@ -248,7 +378,25 @@ fun MultimediaPanel() {
                         exportProgress = 5
                         status = "Uniendo vídeos…"
                         scope.launch {
-                            runCatching { engine.joinVideos(joinSources) { exportProgress = it } }
+                            runCatching {
+                                engine.exportTimeline(
+                                    timelineClips.map { clip ->
+                                        TimelineExportClip(
+                                            input = clip.uri,
+                                            startMs = clip.startMs,
+                                            endMs = clip.endMs,
+                                            speed = speed,
+                                            brightness = brightness,
+                                            contrast = contrast,
+                                            saturation = saturation,
+                                            filter = filter,
+                                            aspect = aspect,
+                                            textOverlay = overlayText.takeIf { it.isNotBlank() }?.let { TextOverlaySpec(it) }
+                                        )
+                                    },
+                                    secondaryAudio = audioUri
+                                ) { exportProgress = it }
+                            }
                                 .onSuccess { status = "Vídeos unidos: " + it.displayName; Toast.makeText(context, "Vídeo unido guardado en la galería", Toast.LENGTH_LONG).show() }
                                 .onFailure { status = "Error al unir vídeos"; Toast.makeText(context, it.message ?: "No se pudieron unir los vídeos", Toast.LENGTH_LONG).show() }
                             exportBusy = false
@@ -262,21 +410,41 @@ fun MultimediaPanel() {
                             status = "Exportando vídeo…"
                             scope.launch {
                                 val result = runCatching {
-                                    engine.exportVideo(
-                                        ExportRequest(
-                                            input = uri,
-                                            startMs = startMs,
-                                            endMs = endMs.takeIf { it != Long.MAX_VALUE },
-                                            speed = speed,
-                                            brightness = brightness,
-                                            contrast = contrast,
-                                            saturation = saturation,
-                                            filter = filter,
-                                            aspect = aspect,
-                                            textOverlay = overlayText.takeIf { it.isNotBlank() }?.let { TextOverlaySpec(it) },
+                                    if (timelineClips.isNotEmpty()) {
+                                        engine.exportTimeline(
+                                            timelineClips.map { clip ->
+                                                TimelineExportClip(
+                                                    input = clip.uri,
+                                                    startMs = clip.startMs,
+                                                    endMs = clip.endMs,
+                                                    speed = speed,
+                                                    brightness = brightness,
+                                                    contrast = contrast,
+                                                    saturation = saturation,
+                                                    filter = filter,
+                                                    aspect = aspect,
+                                                    textOverlay = overlayText.takeIf { it.isNotBlank() }?.let { TextOverlaySpec(it) }
+                                                )
+                                            },
                                             secondaryAudio = audioUri
-                                        )
-                                    ) { exportProgress = it }
+                                        ) { exportProgress = it }
+                                    } else {
+                                        engine.exportVideo(
+                                            ExportRequest(
+                                                input = uri,
+                                                startMs = startMs,
+                                                endMs = endMs.takeIf { it != Long.MAX_VALUE },
+                                                speed = speed,
+                                                brightness = brightness,
+                                                contrast = contrast,
+                                                saturation = saturation,
+                                                filter = filter,
+                                                aspect = aspect,
+                                                textOverlay = overlayText.takeIf { it.isNotBlank() }?.let { TextOverlaySpec(it) },
+                                                secondaryAudio = audioUri
+                                            )
+                                        ) { exportProgress = it }
+                                    }
                                 }
                                 exportBusy = false
                                 result.onSuccess {
@@ -337,6 +505,26 @@ fun MultimediaPanel() {
                             "video" -> StudioMediaKind.VIDEO
                             else -> sourceKind
                         }
+                        if (sourceKind == StudioMediaKind.VIDEO) {
+                            val clipDuration = readDurationMs(context, generatedUri)
+                            timelineClips = listOf(
+                                TimelineClipState(
+                                    id = java.util.UUID.randomUUID().toString(),
+                                    uri = generatedUri,
+                                    name = "Clip IA 1",
+                                    startMs = 0L,
+                                    endMs = clipDuration.takeIf { it > 0L }
+                                )
+                            )
+                            selectedClipIndex = 0
+                            durationMs = clipDuration
+                            startMs = 0L
+                            endMs = clipDuration
+                            playheadMs = 0L
+                        } else {
+                            timelineClips = emptyList()
+                            selectedClipIndex = 0
+                        }
                         mode = StudioMode.EDITOR
                         status = "Resultado importado al editor"
                     }
@@ -365,6 +553,9 @@ private fun EditorStudio(
     aspect: AspectRatio,
     overlayText: String,
     layers: List<TimelineLayer>,
+    timelineClips: List<TimelineClipState>,
+    selectedClipIndex: Int,
+    playheadMs: Long,
     exportBusy: Boolean,
     exportProgress: Int,
     status: String,
@@ -376,6 +567,12 @@ private fun EditorStudio(
     onExtractAudio: () -> Unit,
     onStartMs: (Long) -> Unit,
     onEndMs: (Long) -> Unit,
+    onPlayheadMs: (Long) -> Unit,
+    onSelectClip: (Int) -> Unit,
+    onSplitClip: () -> Unit,
+    onMoveClipUp: () -> Unit,
+    onMoveClipDown: () -> Unit,
+    onDeleteClip: () -> Unit,
     onBrightness: (Float) -> Unit,
     onContrast: (Float) -> Unit,
     onSaturation: (Float) -> Unit,
@@ -414,7 +611,13 @@ private fun EditorStudio(
         )
     }
 
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .navigationBarsPadding(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -487,36 +690,59 @@ private fun EditorStudio(
             }
         }
 
-        Row(
-            Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            ToolPill("Luz") { }
-            ToolPill("Color") { }
-            ToolPill("Filtros") { }
-            ToolPill("Recorte") { }
-            ToolPill("Texto") { }
-            ToolPill("Audio") { }
-            ToolPill("Velocidad") { }
-        }
-
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Línea de tiempo · ${formatDuration(durationMs)}", style = MaterialTheme.typography.titleMedium)
-                Row(
-                    Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
+                Text(
+                    "NLE · " + timelineClips.size + " clip(s) · " + formatDuration(durationMs),
+                    style = MaterialTheme.typography.titleMedium
+                )
+                if (timelineClips.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        timelineClips.forEachIndexed { index, clip ->
+                            val selected = index == selectedClipIndex
+                            Card(
+                                onClick = { onSelectClip(index) },
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer
+                                    else Color(0xFF1E293B)
+                                )
+                            ) {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(clip.name)
+                                        Text(
+                                            formatDuration(clip.startMs) + " → " + formatDuration(clip.endMs ?: durationMs),
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
+                                    OutlinedButton(onClick = onMoveClipUp, enabled = selected && index > 0) { Text("↑") }
+                                    OutlinedButton(onClick = onMoveClipDown, enabled = selected && index < timelineClips.lastIndex) { Text("↓") }
+                                    OutlinedButton(onClick = onSplitClip, enabled = selected) { Text("Cortar") }
+                                    OutlinedButton(onClick = onDeleteClip, enabled = selected && timelineClips.size > 1) { Text("Borrar") }
+                                }
+                            }
+                        }
+                    }
+                } else {
                     layers.forEach { layer ->
                         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))) {
-                            Column(Modifier.padding(10.dp)) {
-                                Text(layer.name, color = Color.White)
-                                Text(layer.kind.name, color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
+                            Column(Modifier.padding(8.dp)) {
+                                Text(layer.name)
+                                Text(layer.kind.name, style = MaterialTheme.typography.labelSmall)
                             }
                         }
                     }
                 }
                 if (durationMs > 0L) {
+                    Text("Playhead " + formatDuration(playheadMs))
+                    Slider(
+                        value = playheadMs.toFloat().coerceIn(0f, durationMs.toFloat()),
+                        onValueChange = { onPlayheadMs(it.toLong()) },
+                        valueRange = 0f..durationMs.toFloat()
+                    )
                     Text("Inicio ${formatDuration(startMs)}")
                     Slider(
                         value = startMs.toFloat(),
@@ -735,13 +961,6 @@ private fun LabeledSlider(
 }
 
 @Composable
-private fun ToolPill(label: String, onClick: () -> Unit) {
-    OutlinedButton(onClick = onClick, modifier = Modifier.width(96.dp)) {
-        Text(label)
-    }
-}
-
-@Composable
 private fun AiStudio(
     context: Context,
     prompt: String,
@@ -757,7 +976,10 @@ private fun AiStudio(
     val modes = listOf("Generador de imágenes IA", "Imagen→Imagen", "Generador de vídeos IA", "Imagen→Vídeo", "Vídeo→Vídeo", "TTS")
 
     Column(
-        Modifier.fillMaxSize(),
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .navigationBarsPadding(),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text("Estudio IA", style = MaterialTheme.typography.headlineSmall)
@@ -843,7 +1065,7 @@ private suspend fun requestAiStudio(
 
     val response = postJson(backend.trimEnd('/') + endpoint, json.toString())
     if (response.status !in 200..299) error(response.body)
-    if (mode == "Vídeo" || mode == "Imagen→Vídeo" || mode == "Vídeo→Vídeo") {
+    if (mode.contains("Vídeo")) {
         val initial = JSONObject(response.body)
         val jobId = initial.getString("jobId")
         return@withContext pollMediaJob(backend, jobId)

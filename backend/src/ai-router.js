@@ -1,6 +1,6 @@
 import { STOP_SEQUENCES, sanitizeAssistantText } from './ai-output.js';
 import { providerHealth } from './ai/provider-health.ts';
-import { generateSequential } from './ai/router.ts';
+import { generateHedged } from './ai/router.ts';
 
 const providers = {
   openai: { key: 'OPENAI_API_KEY', async call(messages, timeoutMs, _attempt, signal) { return callOpenAiCompatible('https://api.openai.com/v1/chat/completions', process.env.OPENAI_API_KEY, process.env.OPENAI_MODEL || 'gpt-4o-mini', messages, timeoutMs, signal); } },
@@ -26,8 +26,12 @@ function providerError(status, message, retryAfterMs = 0) {
   return error;
 }
 
-const FREE_PROVIDER_DEFAULTS = ['gemini', 'groq', 'openrouter', 'deepseek', 'cloudflare', 'kilo', 'horde', 'pollinations', 'animica', 'ollama'];
+const FREE_PROVIDER_DEFAULTS = ['kilo', 'horde', 'pollinations', 'animica', 'ollama'];
 const parseList = (value, fallback) => String(value || fallback).split(',').map((item) => item.trim()).filter(Boolean);
+const NONZERO_COST_PROVIDERS = new Set(['openai','anthropic','deepseek','xai','gemini','groq','openrouter','cloudflare','freeinference']);
+const ZERO_COST_MODE = String(process.env.AI_ZERO_COST_MODE || 'false').toLowerCase() !== 'false';
+const effectiveProviderOrder = (value) => parseList(value, FREE_PROVIDER_DEFAULTS.join(','))
+  .filter((id) => !ZERO_COST_MODE || !NONZERO_COST_PROVIDERS.has(id));
 const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 function sleep(ms, signal) {
@@ -417,18 +421,239 @@ async function callOpenAiCompatible(url, key, model, messages, timeoutMs, parent
   }
 }
 
-export async function generateWithFreePool({ messages, timeoutMs = 30000, signal }) {
-  const order = [...new Set(
-    parseList(process.env.AI_PROVIDER_ORDER, FREE_PROVIDER_DEFAULTS.join(','))
-  )];
 
-  return generateSequential({
+async function callKiloStream(messages, timeoutMs, parentSignal, onDelta) {
+  const { signal, cleanup } = timeoutSignal(parentSignal, timeoutMs);
+  const model = process.env.KILO_MODEL || 'kilo-auto/free';
+  try {
+    const response = await fetch('https://api.kilo.ai/api/gateway/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: true,
+        stop: STOP_SEQUENCES,
+        max_tokens: Math.min(Number(process.env.KILO_MAX_TOKENS || 1200), 2048)
+      }),
+      signal
+    });
+    if (!response.ok) {
+      const json = await readJsonBounded(response);
+      throw responseError(response, json, 'Kilo streaming request failed');
+    }
+    if (!response.body?.getReader) throw providerError(502, 'Kilo streaming body unavailable');
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let text = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (!data) continue;
+        if (data === '[DONE]') return { text: sanitizeAssistantText(text), model };
+        let json;
+        try { json = JSON.parse(data); } catch { continue; }
+        const delta = json?.choices?.[0]?.delta?.content || '';
+        if (delta) {
+          text += delta;
+          await onDelta(delta);
+        }
+      }
+    }
+    const clean = sanitizeAssistantText(text);
+    if (!clean) throw providerError(502, 'Kilo streaming returned empty response');
+    return { text: clean, model };
+  } finally {
+    cleanup();
+  }
+}
+
+export async function streamWithFreePool({ messages, timeoutMs = 30000, signal, onDelta }) {
+  const order = [...new Set(effectiveProviderOrder(process.env.AI_PROVIDER_ORDER))];
+  if (!order.length) throw new ProviderPoolUnavailableError({}, providerHealth.snapshot([]));
+
+  if (order.includes('kilo') && !providerHealth.isCoolingDown('kilo')) {
+    try {
+      const result = await callKiloStream(messages, Math.min(providerTimeoutMs('kilo'), timeoutMs), signal, onDelta);
+      providerHealth.recordSuccess('kilo', { status: 200 });
+      return { ...result, provider: 'kilo' };
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      providerHealth.recordFailure('kilo', error);
+    }
+  }
+
+  const result = await generateWithFreePool({ messages, timeoutMs, signal });
+  await onDelta(result.text);
+  return result;
+}
+
+export async function generateWithFreePool({ messages, timeoutMs = 30000, signal }) {
+  const order = [...new Set(effectiveProviderOrder(process.env.AI_PROVIDER_ORDER))];
+
+  return generateHedged({
     messages,
     timeoutMs,
     signal,
     order,
     providers,
     health: providerHealth,
-    providerTimeoutMs
+    providerTimeoutMs,
+    maxParallel: process.env.AI_MAX_PARALLEL_PROVIDERS || 2
   });
+}
+
+
+const PROVIDER_HEALTH_URLS = {
+  openai: 'https://api.openai.com/v1/models',
+  anthropic: 'https://api.anthropic.com/v1/models',
+  deepseek: 'https://api.deepseek.com/models',
+  xai: 'https://api.x.ai/v1/models',
+  openrouter: 'https://openrouter.ai/api/v1/models',
+  groq: 'https://api.groq.com/openai/v1/models',
+  gemini: 'https://generativelanguage.googleapis.com/v1beta/models',
+  cloudflare: null,
+  kilo: 'https://api.kilo.ai/api/gateway/models',
+  horde: 'https://aihorde.net/api/v2/status/heartbeat',
+  pollinations: 'https://text.pollinations.ai/',
+  freeinference: 'https://freeinference.org/v1/models',
+  animica: 'https://animica.dev/v1/models'
+};
+
+const connectivityHealthCache = new Map();
+const CONNECTIVITY_CACHE_MS = Math.min(Math.max(Number(process.env.AI_HEALTHCHECK_CACHE_MS || 30000), 1000), 300000);
+const CONNECTIVITY_TIMEOUT_MS = Math.min(Math.max(Number(process.env.AI_HEALTHCHECK_TIMEOUT_MS || 1800), 500), 5000);
+
+function liveHealthConfigured(id) {
+  const provider = providers[id];
+  if (!provider) return false;
+  if (id === 'ollama') return Boolean(process.env.IAC33_OLLAMA_ENDPOINT && process.env.IAC33_OLLAMA_API_KEY);
+  if (id === 'cloudflare') return Boolean(process.env.CLOUDFLARE_API_TOKEN && process.env.CLOUDFLARE_ACCOUNT_ID);
+  return !provider.key || Boolean(process.env[provider.key]);
+}
+
+function liveHealthUrl(id) {
+  if (id === 'ollama') {
+    const endpoint = String(process.env.IAC33_OLLAMA_ENDPOINT || '').trim().replace(/\/$/, '');
+    if (!endpoint) return null;
+    try {
+      const parsed = new URL(endpoint);
+      if (parsed.protocol !== 'https:') return null;
+      return parsed.pathname.endsWith('/v1/chat/completions')
+        ? parsed.origin + parsed.pathname.replace('/v1/chat/completions', '/api/tags')
+        : endpoint + '/api/tags';
+    } catch {
+      return null;
+    }
+  }
+  if (id === 'cloudflare') {
+    const account = String(process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+    return account ? 'https://api.cloudflare.com/client/v4/accounts/' + encodeURIComponent(account) + '/ai/models/search?per_page=1' : null;
+  }
+  if (id === 'gemini') {
+    const key = String(process.env.GEMINI_API_KEY || '').trim();
+    return key ? PROVIDER_HEALTH_URLS.gemini + '?key=' + encodeURIComponent(key) : null;
+  }
+  return PROVIDER_HEALTH_URLS[id] || null;
+}
+
+async function liveProbe(url, headers = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CONNECTIVITY_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { accept: 'application/json,text/plain,*/*', ...headers },
+      signal: controller.signal
+    });
+    await response.text().catch(() => '');
+    return { status: response.status, ok: response.ok };
+  } catch (error) {
+    return {
+      status: null,
+      ok: false,
+      state: error?.name === 'AbortError' ? 'TIMEOUT' : 'NETWORK_ERROR',
+      error: String(error?.message || error).slice(0, 160)
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function checkProviderHealth(id, { force = false } = {}) {
+  if (!providers[id]) return { provider: id, state: 'UNKNOWN_PROVIDER' };
+  if (!liveHealthConfigured(id)) return { provider: id, state: 'NOT_CONFIGURED' };
+  const now = Date.now();
+  const cached = connectivityHealthCache.get(id);
+  if (!force && cached && now - cached.checkedAt < CONNECTIVITY_CACHE_MS) {
+    return { ...cached.result, cached: true };
+  }
+
+  const url = liveHealthUrl(id);
+  if (!url) return { provider: id, state: 'NOT_VERIFIABLE' };
+
+  const headers = {};
+  if (id === 'anthropic') {
+    headers['x-api-key'] = process.env.ANTHROPIC_API_KEY;
+    headers['anthropic-version'] = '2023-06-01';
+  } else if (id === 'horde') {
+    headers['Client-Agent'] = 'IAC33:2.0';
+  } else if (id === 'ollama') {
+    headers['x-iac33-llm-key'] = process.env.IAC33_OLLAMA_API_KEY;
+  } else if (id === 'cloudflare') {
+    headers.authorization = 'Bearer ' + process.env.CLOUDFLARE_API_TOKEN;
+  } else if (providers[id]?.key && process.env[providers[id].key]) {
+    headers.authorization = 'Bearer ' + process.env[providers[id].key];
+  }
+
+  const started = Date.now();
+  const observed = await liveProbe(url, headers);
+  const state = observed.ok ? 'OK'
+    : observed.state === 'TIMEOUT' ? 'TIMEOUT'
+    : observed.status === 429 ? 'RATE_LIMITED'
+    : observed.status === 401 || observed.status === 403 ? 'AUTH_ERROR'
+    : observed.status >= 500 ? 'UNAVAILABLE'
+    : observed.state === 'NETWORK_ERROR' ? 'NETWORK_ERROR'
+    : 'ERROR';
+
+  const result = {
+    provider: id,
+    state,
+    status: observed.status,
+    latencyMs: Date.now() - started,
+    ...(observed.error ? { error: observed.error } : {})
+  };
+  connectivityHealthCache.set(id, { checkedAt: Date.now(), result });
+  return result;
+}
+
+export async function diagnoseConnectivity() {
+  const order = [...new Set(parseList(
+    process.env.AI_PROVIDER_ORDER,
+    FREE_PROVIDER_DEFAULTS.join(',')
+  ))];
+  const internetStarted = Date.now();
+  const internet = await liveProbe(
+    process.env.AI_INTERNET_HEALTHCHECK_URL || 'https://www.google.com/generate_204'
+  );
+  const providerResults = await Promise.all(order.map((id) => checkProviderHealth(id, { force: true })));
+  return {
+    internet: {
+      state: internet.ok || internet.status === 204 ? 'OK' : (internet.state || 'ERROR'),
+      status: internet.status,
+      latencyMs: Date.now() - internetStarted,
+      ...(internet.error ? { error: internet.error } : {})
+    },
+    router: 'hedged-failover',
+    order,
+    providers: providerResults,
+    generatedAt: new Date().toISOString()
+  };
 }

@@ -84,6 +84,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.TimeoutCancellationException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -276,14 +277,28 @@ private fun AiPanel(
                     AiMessage(it.role, it.text.take(ChatStore.MAX_MESSAGE_CHARS))
                 }
 
+                var streamedText = ""
+                var lastUiPaintMs = 0L
                 val result = withTimeout(AI_UI_TIMEOUT_MS) {
-                    engine.generate(
+                    engine.generateStreaming(
                         AiRequest(
                             conversationId = UUID.randomUUID().toString(),
                             messages = messages,
                             timeoutMs = AI_REQUEST_TIMEOUT_MS
                         )
-                    )
+                    ) { delta ->
+                        streamedText += delta
+                        val now = System.currentTimeMillis()
+                        if (now - lastUiPaintMs >= 100L) {
+                            lastUiPaintMs = now
+                            withContext(Dispatchers.Main.immediate) {
+                                val visible = AiTextSanitizer.sanitize(streamedText)
+                                if (visible.isNotBlank()) {
+                                    onLinesChange(updated + ChatLine("assistant", visible, "remote"))
+                                }
+                            }
+                        }
+                    }
                 }
 
                 when (result) {
@@ -595,8 +610,8 @@ private fun RedPanel(connectivityStatus: ConnectivityStatus) {
                         busy = true
                         scope.launch(Dispatchers.IO) {
                             val results = listOf(
-                                "Backend" to BuildConfig.IAC33_BACKEND_URL.trimEnd('/') + "/health",
-                                "IA router" to BuildConfig.IAC33_BACKEND_URL.trimEnd('/') + "/v1/ai/status",
+                                "Backend" to BuildConfig.IAC33_BACKEND_URL.trimEnd('/') + "/ready",
+                                "IA router" to BuildConfig.IAC33_BACKEND_URL.trimEnd('/') + "/v1/ai/diagnostics",
                                 "Mapas OSM" to "https://tile.openstreetmap.org/5/10/12.png",
                                 "USGS" to "https://earthquake.usgs.gov/"
                             ).map { (label, url) ->

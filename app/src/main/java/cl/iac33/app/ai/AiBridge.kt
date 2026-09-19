@@ -1,3 +1,4 @@
+
 package cl.iac33.app.ai
 
 import android.content.Context
@@ -18,6 +19,14 @@ class AiBridge(
     private val local = LocalFallbackProvider()
     private val remote = RemoteBackendProvider(backendUrl)
     private val router = AiRouter(if (localFirst) listOf(local, remote) else listOf(remote, local))
+
+    override suspend fun generateStreaming(request: AiRequest, onDelta: suspend (String) -> Unit): OperationResult<AiResult> {
+        return when (connectivity.status()) {
+            ConnectivityStatus.OFFLINE -> local.generateStreaming(request, onDelta)
+            ConnectivityStatus.ONLINE,
+            ConnectivityStatus.LIMITED -> router.generateStreaming(request, onDelta)
+        }
+    }
 
     override suspend fun generate(request: AiRequest): OperationResult<AiResult> {
         return when (connectivity.status()) {

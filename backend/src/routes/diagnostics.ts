@@ -1,13 +1,16 @@
 import { providerHealth } from '../ai/provider-health.ts';
+import { diagnoseConnectivity } from '../ai-router.js';
 
-export function buildAiDiagnostics(order = []) {
-  const providers = providerHealth.snapshot(order);
-
+export async function buildAiDiagnostics(order = []) {
+  const live = await diagnoseConnectivity();
   return {
-    ok: true,
+    ok: live.internet.state === 'OK',
     service: 'iac33-ai',
-    router: 'sequential-cascade',
-    timestamp: new Date().toISOString(),
-    providers
+    router: live.router,
+    timestamp: live.generatedAt,
+    providers: live.providers,
+    internet: live.internet,
+    configuredOrder: order,
+    runtimeHealth: providerHealth.snapshot(order)
   };
 }

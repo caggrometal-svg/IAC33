@@ -72,6 +72,19 @@ data class ExportRequest(
     val secondaryAudio: Uri? = null
 )
 
+data class TimelineExportClip(
+    val input: Uri,
+    val startMs: Long = 0L,
+    val endMs: Long? = null,
+    val speed: Float = 1f,
+    val brightness: Float = 0f,
+    val contrast: Float = 0f,
+    val saturation: Float = 1f,
+    val filter: MediaFilter = MediaFilter.NONE,
+    val aspect: AspectRatio = AspectRatio.ORIGINAL,
+    val textOverlay: TextOverlaySpec? = null
+)
+
 data class ExportedMedia(
     val uri: Uri,
     val mimeType: String,
@@ -145,6 +158,98 @@ class MediaExportEngine(private val context: Context) {
                     })
                     .build()
 
+                continuation.invokeOnCancellation { runCatching { transformer.cancel() } }
+                onProgress(5)
+                transformer.start(composition, output.absolutePath)
+            }
+        } finally {
+            output.delete()
+        }
+    }
+
+    suspend fun exportTimeline(
+        clips: List<TimelineExportClip>,
+        secondaryAudio: Uri? = null,
+        onProgress: (Int) -> Unit = {}
+    ): ExportedMedia = withContext(Dispatchers.IO) {
+        require(clips.isNotEmpty()) { "La línea de tiempo está vacía" }
+        require(clips.size <= 32) { "Demasiados clips en la línea de tiempo" }
+        require(clips.all { it.speed in 0.25f..4f && (it.endMs == null || it.endMs > it.startMs) }) {
+            "Hay un rango o velocidad inválidos en la línea de tiempo"
+        }
+
+        val output = File.createTempFile("iac33_timeline_", ".mp4", context.cacheDir)
+        try {
+            val items = clips.map { clip ->
+                val mediaItem = MediaItem.Builder()
+                    .setUri(clip.input)
+                    .setClippingConfiguration(
+                        MediaItem.ClippingConfiguration.Builder()
+                            .setStartPositionMs(max(0L, clip.startMs))
+                            .apply {
+                                clip.endMs?.let { setEndPositionMs(max(clip.startMs + 1L, it)) }
+                            }
+                            .build()
+                    )
+                    .build()
+                EditedMediaItem.Builder(mediaItem)
+                    .setEffects(
+                        Effects(
+                            emptyList(),
+                            buildVideoEffects(
+                                ExportRequest(
+                                    input = clip.input,
+                                    startMs = clip.startMs,
+                                    endMs = clip.endMs,
+                                    speed = clip.speed,
+                                    brightness = clip.brightness,
+                                    contrast = clip.contrast,
+                                    saturation = clip.saturation,
+                                    filter = clip.filter,
+                                    aspect = clip.aspect,
+                                    textOverlay = clip.textOverlay
+                                )
+                            )
+                        )
+                    )
+                    .setSpeed(FixedSpeedProvider(clip.speed))
+                    .build()
+            }
+            val videoSequence = EditedMediaItemSequence.withAudioAndVideoFrom(items)
+            val composition = if (secondaryAudio != null) {
+                val bgAudio = EditedMediaItem.Builder(MediaItem.fromUri(secondaryAudio)).build()
+                val bgSequence = EditedMediaItemSequence.withAudioFrom(listOf(bgAudio))
+                    .buildUpon()
+                    .setIsLooping(true)
+                    .build()
+                Composition.Builder(videoSequence, bgSequence).build()
+            } else {
+                Composition.Builder(videoSequence).build()
+            }
+
+            suspendCancellableCoroutine<ExportedMedia> { continuation ->
+                val transformer = Transformer.Builder(context)
+                    .setVideoMimeType(MimeTypes.VIDEO_H264)
+                    .setAudioMimeType(MimeTypes.AUDIO_AAC)
+                    .addListener(object : Transformer.Listener {
+                        override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                            onProgress(100)
+                            if (continuation.isActive) {
+                                runCatching { saveVideoToGallery(output) }
+                                    .onSuccess { continuation.resume(it) }
+                                    .onFailure { continuation.resumeWithException(it) }
+                            }
+                        }
+
+                        override fun onError(
+                            composition: Composition,
+                            exportResult: ExportResult,
+                            exportException: ExportException
+                        ) {
+                            if (continuation.isActive) continuation.resumeWithException(exportException)
+                        }
+                    })
+                    .build()
                 continuation.invokeOnCancellation { runCatching { transformer.cancel() } }
                 onProgress(5)
                 transformer.start(composition, output.absolutePath)
