@@ -42,7 +42,6 @@ jobs:
           required_ota = [
               "id-token: write",
               "/v1/gpt/commands",
-              "app/**",
               "IAC33_OTA_BOOTSTRAP_VERSION",
               "IAC33_VERSION_CODE",
               "IAC33_VERSION_NAME",
@@ -51,6 +50,13 @@ jobs:
 
           missing = [item for item in required_oidc if item not in oidc]
           missing += [item for item in required_ota if item not in ota]
+
+          app_dir = Path("app")
+          if not app_dir.is_dir():
+              missing.append("app/ directory")
+          elif not any(app_dir.rglob("*")):
+              missing.append("app/ source tree")
+
           if missing:
               raise SystemExit("Bridge integrity contract missing: " + ", ".join(missing))
           print("Bridge contract: PASS")
