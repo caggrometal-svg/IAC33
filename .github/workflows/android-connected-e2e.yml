@@ -35,6 +35,12 @@ jobs:
         timeout-minutes: 4
         run: gradle testDebugUnitTest assembleDebug assembleDebugAndroidTest --parallel --build-cache --no-daemon --console=plain
 
+      - name: Verify Android E2E artifacts
+        run: |
+          set -euo pipefail
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          test -s app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+
       - name: Run Android connected E2E
         timeout-minutes: 12
         uses: ReactiveCircus/android-emulator-runner@v2
