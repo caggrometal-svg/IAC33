@@ -177,10 +177,10 @@ class MediaExportEngine(private val context: Context) {
                 ))
             })
             when (filter) {
-                MediaFilter.BW -> setSaturation(0f)
-                MediaFilter.SEPIA -> set(sepiaMatrix())
-                MediaFilter.VINTAGE -> set(vintageMatrix())
-                MediaFilter.CYBERPUNK -> set(cyberpunkMatrix())
+                MediaFilter.BW -> postConcat(ColorMatrix().apply { setSaturation(0f) })
+                MediaFilter.SEPIA -> postConcat(ColorMatrix(sepiaMatrix()))
+                MediaFilter.VINTAGE -> postConcat(ColorMatrix(vintageMatrix()))
+                MediaFilter.CYBERPUNK -> postConcat(ColorMatrix(cyberpunkMatrix()))
                 MediaFilter.NONE -> Unit
             }
         }
@@ -203,6 +203,49 @@ class MediaExportEngine(private val context: Context) {
             canvas.drawText(overlay.text.take(140), outputBitmap.width / 2f, outputBitmap.height - textPaint.textSize, textPaint)
         }
         saveBitmapToGallery(outputBitmap)
+    }
+
+    suspend fun joinVideos(
+        sources: List<Uri>,
+        onProgress: (Int) -> Unit = {}
+    ): ExportedMedia = withContext(Dispatchers.IO) {
+        require(sources.size >= 2) { "Selecciona al menos dos vídeos" }
+        val output = File.createTempFile("iac33_join_", ".mp4", context.cacheDir)
+        try {
+            val items = sources.map { uri ->
+                EditedMediaItem.Builder(MediaItem.fromUri(uri)).build()
+            }
+            val sequence = EditedMediaItemSequence.withAudioAndVideoFrom(items)
+            val composition = Composition.Builder(sequence).build()
+            suspendCancellableCoroutine<ExportedMedia> { continuation ->
+                val transformer = Transformer.Builder(context)
+                    .setVideoMimeType(MimeTypes.VIDEO_H264)
+                    .setAudioMimeType(MimeTypes.AUDIO_AAC)
+                    .addListener(object : Transformer.Listener {
+                        override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                            onProgress(100)
+                            if (continuation.isActive) {
+                                runCatching { saveVideoToGallery(output) }
+                                    .onSuccess { continuation.resume(it) }
+                                    .onFailure { continuation.resumeWithException(it) }
+                            }
+                        }
+                        override fun onError(
+                            composition: Composition,
+                            exportResult: ExportResult,
+                            exportException: ExportException
+                        ) {
+                            if (continuation.isActive) continuation.resumeWithException(exportException)
+                        }
+                    })
+                    .build()
+                continuation.invokeOnCancellation { runCatching { transformer.cancel() } }
+                onProgress(5)
+                transformer.start(composition, output.absolutePath)
+            }
+        } finally {
+            output.delete()
+        }
     }
 
     suspend fun extractAudio(source: Uri): ExportedMedia = withContext(Dispatchers.IO) {
