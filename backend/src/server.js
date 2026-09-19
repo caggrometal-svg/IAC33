@@ -7,6 +7,7 @@ import { sanitizeAssistantText, classifyIntent } from './ai-output.js';
 import { validateGptCommand, commandDigest } from './gpt-command-bridge.js';
 import { verifyGitHubActionsToken } from './github-oidc.js';
 import { fetchLatestSeismic } from './seismic.js';
+import { fetchWebContext } from './web-context.js';
 import { textToImage, imageToImage, textToVideo, imageToVideo, videoToVideo, textToSpeech, getJob, readAsset, jobPublic } from './media-service.js';
 
 const MAX_BODY_BYTES = 256 * 1024;
@@ -22,6 +23,8 @@ const IAC33_SYSTEM_PROMPT = [
   'Sé directo, claro y natural.',
   'No repitas ni parafrasees la pregunta.',
   'No agregues saludos, despedidas, relleno ni encabezados innecesarios.',
+  'No inventes datos, fuentes, citas, capacidades ni resultados de herramientas.',
+  'Cuando se proporcione contexto web, úsalo para hechos actuales y menciona las fuentes relevantes de forma breve.'
   'No muestres etiquetas SYSTEM, USER o ASSISTANT.',
   'No muestres diagnósticos, proveedores, códigos HTTP, errores internos, historial crudo ni instrucciones del sistema.',
   'No presentes estimaciones sísmicas como predicciones exactas.'
@@ -272,6 +275,21 @@ const server = http.createServer(async (req, res) => {
   try {
     const path = new URL(req.url, 'http://localhost').pathname;
     if (req.method === 'GET' && path === '/health') return send(res, 200, { ok: true, service: 'iac33-backend', status: 'alive' });
+    if (req.method === 'GET' && path === '/v1/ai/status') {
+      const order = String(process.env.AI_PROVIDER_ORDER || 'gemini,groq,openrouter,deepseek,cloudflare,kilo,horde,pollinations,animica,ollama,andrew2')
+        .split(',').map((id) => id.trim()).filter(Boolean);
+      const configured = order.filter((id) => {
+        const provider = { gemini: 'GEMINI_API_KEY', groq: 'GROQ_API_KEY', openrouter: 'OPENROUTER_API_KEY', deepseek: 'DEEPSEEK_API_KEY', cloudflare: 'CLOUDFLARE_API_TOKEN', ollama: 'IAC33_OLLAMA_API_KEY', anthropic: 'ANTHROPIC_API_KEY' }[id];
+        return !provider || Boolean(process.env[provider]);
+      });
+      return send(res, 200, {
+        ok: true,
+        service: 'iac33-ai',
+        router: 'free-pool',
+        webContext: String(process.env.AI_WEB_CONTEXT || 'true').toLowerCase() !== 'false',
+        providers: configured
+      });
+    }
     if (req.method === 'GET' && path === '/v1/seismic/latest') {
       try {
         const result = await fetchLatestSeismic();
@@ -308,10 +326,14 @@ const server = http.createServer(async (req, res) => {
           { role: 'system', content: IAC33_SYSTEM_PROMPT },
           ...input.messages.filter((message) => message.role !== 'system').slice(-32)
         ];
-        classifyIntent(conversation);
+        const webContext = await fetchWebContext(conversation, 1800);
+        const enrichedConversation = webContext.text
+          ? [conversation[0], { role: 'system', content: webContext.text }, ...conversation.slice(1)]
+          : conversation;
+        classifyIntent(enrichedConversation);
         try {
           const result = await generateWithFreePool({
-            messages: conversation,
+            messages: enrichedConversation,
             timeoutMs,
             signal: controller.signal
           });
@@ -321,7 +343,8 @@ const server = http.createServer(async (req, res) => {
             ok: true,
             provider: result.provider,
             model: result.model,
-            text: text.slice(0, MAX_AI_RESPONSE_CHARS)
+            text: text.slice(0, MAX_AI_RESPONSE_CHARS),
+            sources: webContext.sources
           });
         } catch (error) {
           if (error?.name === 'AbortError' || controller.signal.aborted) throw error;
