@@ -112,17 +112,24 @@ async function fetchGoogleNews(query) {
   const { signal, cleanup } = timeoutSignal(WEB_TIMEOUT_MS);
   try {
     const response = await fetch(url, {
-      headers: { accept: 'application/rss+xml,application/xml,text/xml,*/*', 'user-agent': 'IAC33/2.0 web-context' },
+      headers: {
+        accept: 'application/rss+xml,application/xml,text/xml,*/*',
+        'user-agent': 'IAC33/2.0 web-context'
+      },
       signal
     });
     if (!response.ok) return [];
     const xml = await response.text();
     const items = [];
-    const blocks = xml.match(/<item>[\\s\\S]*?<\\/item>/g) || [];
+    const blocks = xml.match(/<item>[\s\S]*?<\/item>/g) || [];
     for (const block of blocks.slice(0, MAX_RESULTS_PER_SOURCE)) {
-      const title = decodeXml((block.match(/<title><!\\[CDATA\\[(.*?)\\]\\]><\\/title>/s) || block.match(/<title>(.*?)<\\/title>/s) || [])[1] || '');
-      const link = decodeXml((block.match(/<link>(.*?)<\\/link>/s) || [])[1] || '');
-      const description = decodeXml((block.match(/<description><!\\[CDATA\\[(.*?)\\]\\]><\\/description>/s) || block.match(/<description>(.*?)<\\/description>/s) || [])[1] || '').replace(/<[^>]+>/g, ' ');
+      const title =
+        decodeXml((block.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/s) ||
+          block.match(/<title>(.*?)<\/title>/s) || [])[1] || '');
+      const link = decodeXml((block.match(/<link>(.*?)<\/link>/s) || [])[1] || '');
+      const description =
+        decodeXml((block.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/s) ||
+          block.match(/<description>(.*?)<\/description>/s) || [])[1] || '').replace(/<[^>]+>/g, ' ');
       if (title) items.push({ source: 'Google News', title, snippet: description.slice(0, 500), url: link });
     }
     return items;
@@ -142,9 +149,8 @@ function decodeXml(value) {
     .replace(/&#39;/g, "'");
 }
 
-async function fetchUsEearthquakeFeed() {
-  const url = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson';
-  const json = await getJson(url, WEB_TIMEOUT_MS);
+async function fetchUsEarthquakeFeed() {
+  const json = await getJson('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson', WEB_TIMEOUT_MS);
   return (json?.features || []).slice(0, 6).map((feature) => {
     const p = feature?.properties || {};
     return {
@@ -177,7 +183,7 @@ export async function fetchWebContext(messages = [], timeoutMs = WEB_TIMEOUT_MS)
 
   const tasks = [fetchWikipedia(query), fetchDuckDuckGo(query)];
   if (NEWS_MARKERS.test(query)) tasks.push(fetchGoogleNews(query));
-  if (SEISMIC_MARKERS.test(query)) tasks.push(fetchUsEearthquakeFeed());
+  if (SEISMIC_MARKERS.test(query)) tasks.push(fetchUsEarthquakeFeed());
 
   const results = await Promise.race([
     Promise.allSettled(tasks),
@@ -197,12 +203,12 @@ export async function fetchWebContext(messages = [], timeoutMs = WEB_TIMEOUT_MS)
     'Usa estos datos solo para mejorar precisión y actualidad. No inventes hechos que no estén respaldados.',
     ...selected.map((item, index) =>
       '[' + (index + 1) + '] ' + item.source + ' — ' + item.title +
-      '\\n' + item.snippet +
-      (item.url ? '\\nFuente: ' + item.url : '')
+      '\n' + item.snippet +
+      (item.url ? '\nFuente: ' + item.url : '')
     )
   ];
 
-  const text = lines.join('\\n\\n').slice(0, MAX_CONTEXT_CHARS);
+  const text = lines.join('\n\n').slice(0, MAX_CONTEXT_CHARS);
   return {
     text,
     sources: selected.map((item) => ({ source: item.source, title: item.title, url: item.url })).filter((item) => item.url)
