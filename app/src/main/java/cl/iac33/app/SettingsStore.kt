@@ -7,7 +7,8 @@ data class AppSettings(
     val seismicAutoRefresh: Boolean = true,
     val seismicMinimumMagnitude: Float = 3.0f,
     val mapZoom: Int = 5,
-    val haptics: Boolean = true
+    val haptics: Boolean = true,
+    val accent: String = "green"
 )
 
 class SettingsStore(context: Context) {
@@ -18,7 +19,8 @@ class SettingsStore(context: Context) {
         seismicAutoRefresh = prefs.getBoolean(KEY_SEISMIC_AUTO_REFRESH, true),
         seismicMinimumMagnitude = prefs.getFloat(KEY_SEISMIC_MIN_MAG, 3.0f),
         mapZoom = prefs.getInt(KEY_MAP_ZOOM, 5).coerceIn(3, 8),
-        haptics = prefs.getBoolean(KEY_HAPTICS, true)
+        haptics = prefs.getBoolean(KEY_HAPTICS, true),
+        accent = prefs.getString(KEY_ACCENT, "green") ?: "green"
     )
 
     fun save(settings: AppSettings) {
@@ -28,6 +30,7 @@ class SettingsStore(context: Context) {
             .putFloat(KEY_SEISMIC_MIN_MAG, settings.seismicMinimumMagnitude)
             .putInt(KEY_MAP_ZOOM, settings.mapZoom.coerceIn(3, 8))
             .putBoolean(KEY_HAPTICS, settings.haptics)
+            .putString(KEY_ACCENT, settings.accent)
             .apply()
     }
 
@@ -40,5 +43,6 @@ class SettingsStore(context: Context) {
         private const val KEY_SEISMIC_MIN_MAG = "seismic_min_magnitude"
         private const val KEY_MAP_ZOOM = "map_zoom"
         private const val KEY_HAPTICS = "haptics"
+        private const val KEY_ACCENT = "accent"
     }
 }

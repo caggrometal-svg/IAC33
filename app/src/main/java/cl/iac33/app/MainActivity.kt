@@ -145,7 +145,7 @@ class MainActivity : ComponentActivity() {
                 onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
             }
 
-            IAC33Theme {
+            IAC33Theme(accent = settings.accent) {
                 Scaffold(
                     topBar = {
                         TopAppBar(
@@ -895,6 +895,23 @@ private fun SettingsPanel(
                         valueRange = 3f..8f,
                         steps = 4
                     )
+                }
+            }
+        }
+        item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("Color de la aplicación", style = MaterialTheme.typography.titleMedium)
+                    Text("Cambia el color de énfasis de IAC33.", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("green" to "Verde", "blue" to "Azul", "purple" to "Púrpura", "orange" to "Naranja").forEach { (value, label) ->
+                            OutlinedButton(
+                                onClick = { onChange(settings.copy(accent = value)) },
+                                border = if (settings.accent == value) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
+                            ) { Text(label) }
+                        }
+                    }
                 }
             }
         }

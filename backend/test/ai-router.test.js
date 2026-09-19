@@ -231,21 +231,20 @@ test('uses private Ollama before public fallback providers', async () => {
 });
 
 
-test('routes through the recovered Andrew2 Render backend', async () => {
+test('does not route through the retired Andrew2 Render backend', async () => {
   process.env.AI_PROVIDER_ORDER = 'andrew2';
-  let requestedUrl = '';
-  globalThis.fetch = async (url, options) => {
-    requestedUrl = String(url);
-    assert.equal(options.headers['x-iac33-bridge'], 'IAC33/Andrew2');
-    return new Response(
-      JSON.stringify({ ok: true, provider: 'openai', model: 'gpt-5.6-luna', text: 'andrew2-ok' }),
-      { status: 200, headers: { 'content-type': 'application/json' } }
-    );
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    throw new Error('stale Andrew2 provider should not be called');
   };
-  const result = await router.generateWithFreePool({ messages, timeoutMs: 2000 });
-  assert.equal(result.provider, 'andrew2');
-  assert.equal(result.text, 'andrew2-ok');
-  assert.equal(requestedUrl, 'https://andrew2-api.onrender.com/v1/ai/generate');
+  await assert.rejects(
+    router.generateWithFreePool({ messages, timeoutMs: 2000 }),
+    error => error?.name === 'ProviderPoolUnavailableError' && error?.trace?.andrew2 === 'OFFLINE'
+  );
+  assert.equal(calls, 0);
+  globalThis.fetch = originalFetch;
 });
 
 test('keeps the legacy provider pool available without making it mandatory', async () => {
