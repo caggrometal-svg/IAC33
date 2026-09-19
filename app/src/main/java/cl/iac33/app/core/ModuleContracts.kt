@@ -1,10 +1,18 @@
+
 package cl.iac33.app.core
 
 data class AiMessage(val role: String, val content: String)
 data class AiRequest(val conversationId: String, val messages: List<AiMessage>, val timeoutMs: Long = 20_000)
 data class AiResult(val provider: String?, val model: String?, val text: String?, val latencyMs: Long, val error: OperationError? = null)
 
-interface AiEngine { suspend fun generate(request: AiRequest): OperationResult<AiResult> }
+interface AiEngine {
+    suspend fun generate(request: AiRequest): OperationResult<AiResult>
+    suspend fun generateStreaming(request: AiRequest, onDelta: suspend (String) -> Unit): OperationResult<AiResult> {
+        val result = generate(request)
+        if (result is OperationResult.Success) result.value.text?.takeIf { it.isNotBlank() }?.let { onDelta(it) }
+        return result
+    }
+}
 interface ConnectivityEngine { fun state(): ConnectivityState; suspend fun probe(): OperationResult<ConnectivityState> }
 interface MemoryEngine { suspend fun put(item: MemoryItem): OperationResult<Unit>; suspend fun search(query: String): OperationResult<List<MemoryItem>> }
 interface LocationEngine { fun permissionState(): LocationPermission; suspend fun lastKnown(): OperationResult<LocationSnapshot?> }
