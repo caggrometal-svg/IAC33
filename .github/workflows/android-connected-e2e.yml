@@ -36,10 +36,10 @@ jobs:
         run: gradle testDebugUnitTest assembleDebug assembleDebugAndroidTest --parallel --build-cache --no-daemon --console=plain
 
       - name: Run Android connected E2E
-        timeout-minutes: 10
+        timeout-minutes: 12
         uses: ReactiveCircus/android-emulator-runner@v2
         with:
-          api-level: 34
+          api-level: 30
           arch: x86_64
           profile: pixel_2
           force-avd-creation: true
