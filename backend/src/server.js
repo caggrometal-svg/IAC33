@@ -394,7 +394,7 @@ const server = http.createServer(async (req, res) => {
             model: result.model || null,
             sources: webContext.sources || []
           });
-          sendEvent('[DONE]');
+          if (!res.writableEnded) res.write('data: [DONE]\\n\\n');
           if (!res.writableEnded) res.end();
         } catch (error) {
           if (headersSent) {
