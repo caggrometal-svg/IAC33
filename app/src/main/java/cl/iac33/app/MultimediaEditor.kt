@@ -216,6 +216,78 @@ fun MultimediaPanel() {
         status = "Pista secundaria cargada"
     }
 
+    fun selectTimelineClip(index: Int) {
+        val clip = timelineClips.getOrNull(index) ?: return
+        selectedClipIndex = index
+        source = clip.uri
+        sourceKind = StudioMediaKind.VIDEO
+        durationMs = readDurationMs(context, clip.uri)
+        startMs = clip.startMs
+        endMs = clip.endMs ?: durationMs
+        playheadMs = startMs
+    }
+
+    fun updateSelectedClipRange(nextStart: Long? = null, nextEnd: Long? = null) {
+        val clip = timelineClips.getOrNull(selectedClipIndex) ?: return
+        val duration = durationMs.coerceAtLeast(1L)
+        val start = (nextStart ?: startMs).coerceIn(0L, duration - 1L)
+        val end = (nextEnd ?: endMs).coerceIn(start + 1L, duration)
+        startMs = start
+        endMs = end
+        timelineClips = timelineClips.mapIndexed { index, item ->
+            if (index == selectedClipIndex) item.copy(startMs = start, endMs = end) else item
+        }
+        playheadMs = playheadMs.coerceIn(start, end)
+    }
+
+    fun splitSelectedClip() {
+        val clip = timelineClips.getOrNull(selectedClipIndex) ?: return
+        val start = clip.startMs
+        val end = clip.endMs ?: durationMs
+        val cut = playheadMs.coerceIn(start + 1L, end - 1L)
+        if (end - start < 2_000L || cut <= start || cut >= end) {
+            status = "El playhead no permite dividir este clip"
+            return
+        }
+        val first = clip.copy(name = clip.name + " A", endMs = cut)
+        val second = clip.copy(
+            id = java.util.UUID.randomUUID().toString(),
+            name = clip.name + " B",
+            startMs = cut,
+            endMs = end
+        )
+        timelineClips = timelineClips.toMutableList().apply {
+            removeAt(selectedClipIndex)
+            add(selectedClipIndex, second)
+            add(selectedClipIndex, first)
+        }
+        selectedClipIndex += 1
+        selectTimelineClip(selectedClipIndex)
+        status = "Clip dividido en " + formatDuration(cut)
+    }
+
+    fun moveTimelineClip(delta: Int) {
+        val target = selectedClipIndex + delta
+        if (target !in timelineClips.indices) return
+        timelineClips = timelineClips.toMutableList().apply {
+            val item = removeAt(selectedClipIndex)
+            add(target, item)
+        }
+        selectedClipIndex = target
+        status = "Clip reordenado"
+    }
+
+    fun deleteTimelineClip() {
+        if (timelineClips.size <= 1) {
+            status = "La línea de tiempo necesita al menos un clip"
+            return
+        }
+        timelineClips = timelineClips.toMutableList().apply { removeAt(selectedClipIndex) }
+        selectedClipIndex = selectedClipIndex.coerceAtMost(timelineClips.lastIndex)
+        selectTimelineClip(selectedClipIndex)
+        status = "Clip eliminado"
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -261,6 +333,9 @@ fun MultimediaPanel() {
                     aspect = aspect,
                     overlayText = overlayText,
                     layers = layers,
+                    timelineClips = timelineClips,
+                    selectedClipIndex = selectedClipIndex,
+                    playheadMs = playheadMs,
                     exportBusy = exportBusy,
                     exportProgress = exportProgress,
                     status = status,
@@ -282,8 +357,14 @@ fun MultimediaPanel() {
                             }
                         }
                     },
-                    onStartMs = { startMs = it },
-                    onEndMs = { endMs = it },
+                    onStartMs = { updateSelectedClipRange(nextStart = it) },
+                    onEndMs = { updateSelectedClipRange(nextEnd = it) },
+                    onPlayheadMs = { playheadMs = it.coerceIn(startMs, endMs.coerceAtMost(durationMs)) },
+                    onSelectClip = ::selectTimelineClip,
+                    onSplitClip = ::splitSelectedClip,
+                    onMoveClipUp = { moveTimelineClip(-1) },
+                    onMoveClipDown = { moveTimelineClip(1) },
+                    onDeleteClip = ::deleteTimelineClip,
                     onBrightness = { brightness = it },
                     onContrast = { contrast = it },
                     onSaturation = { saturation = it },
@@ -297,7 +378,25 @@ fun MultimediaPanel() {
                         exportProgress = 5
                         status = "Uniendo vídeos…"
                         scope.launch {
-                            runCatching { engine.joinVideos(joinSources) { exportProgress = it } }
+                            runCatching {
+                                engine.exportTimeline(
+                                    timelineClips.map { clip ->
+                                        TimelineExportClip(
+                                            input = clip.uri,
+                                            startMs = clip.startMs,
+                                            endMs = clip.endMs,
+                                            speed = speed,
+                                            brightness = brightness,
+                                            contrast = contrast,
+                                            saturation = saturation,
+                                            filter = filter,
+                                            aspect = aspect,
+                                            textOverlay = overlayText.takeIf { it.isNotBlank() }?.let { TextOverlaySpec(it) }
+                                        )
+                                    },
+                                    secondaryAudio = audioUri
+                                ) { exportProgress = it }
+                            }
                                 .onSuccess { status = "Vídeos unidos: " + it.displayName; Toast.makeText(context, "Vídeo unido guardado en la galería", Toast.LENGTH_LONG).show() }
                                 .onFailure { status = "Error al unir vídeos"; Toast.makeText(context, it.message ?: "No se pudieron unir los vídeos", Toast.LENGTH_LONG).show() }
                             exportBusy = false
@@ -311,21 +410,41 @@ fun MultimediaPanel() {
                             status = "Exportando vídeo…"
                             scope.launch {
                                 val result = runCatching {
-                                    engine.exportVideo(
-                                        ExportRequest(
-                                            input = uri,
-                                            startMs = startMs,
-                                            endMs = endMs.takeIf { it != Long.MAX_VALUE },
-                                            speed = speed,
-                                            brightness = brightness,
-                                            contrast = contrast,
-                                            saturation = saturation,
-                                            filter = filter,
-                                            aspect = aspect,
-                                            textOverlay = overlayText.takeIf { it.isNotBlank() }?.let { TextOverlaySpec(it) },
+                                    if (timelineClips.isNotEmpty()) {
+                                        engine.exportTimeline(
+                                            timelineClips.map { clip ->
+                                                TimelineExportClip(
+                                                    input = clip.uri,
+                                                    startMs = clip.startMs,
+                                                    endMs = clip.endMs,
+                                                    speed = speed,
+                                                    brightness = brightness,
+                                                    contrast = contrast,
+                                                    saturation = saturation,
+                                                    filter = filter,
+                                                    aspect = aspect,
+                                                    textOverlay = overlayText.takeIf { it.isNotBlank() }?.let { TextOverlaySpec(it) }
+                                                )
+                                            },
                                             secondaryAudio = audioUri
-                                        )
-                                    ) { exportProgress = it }
+                                        ) { exportProgress = it }
+                                    } else {
+                                        engine.exportVideo(
+                                            ExportRequest(
+                                                input = uri,
+                                                startMs = startMs,
+                                                endMs = endMs.takeIf { it != Long.MAX_VALUE },
+                                                speed = speed,
+                                                brightness = brightness,
+                                                contrast = contrast,
+                                                saturation = saturation,
+                                                filter = filter,
+                                                aspect = aspect,
+                                                textOverlay = overlayText.takeIf { it.isNotBlank() }?.let { TextOverlaySpec(it) },
+                                                secondaryAudio = audioUri
+                                            )
+                                        ) { exportProgress = it }
+                                    }
                                 }
                                 exportBusy = false
                                 result.onSuccess {
