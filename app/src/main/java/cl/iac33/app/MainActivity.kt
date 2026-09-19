@@ -232,8 +232,8 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private const val AI_REQUEST_TIMEOUT_MS = 10_000L
-private const val AI_UI_TIMEOUT_MS = 12_000L
+private const val AI_REQUEST_TIMEOUT_MS = 20_000L
+private const val AI_UI_TIMEOUT_MS = 22_000L
 
 private fun cleanVisibleAiText(raw: String?): String = AiTextSanitizer.sanitize(raw)
 
@@ -596,6 +596,7 @@ private fun RedPanel(connectivityStatus: ConnectivityStatus) {
                         scope.launch(Dispatchers.IO) {
                             val results = listOf(
                                 "Backend" to BuildConfig.IAC33_BACKEND_URL.trimEnd('/') + "/health",
+                                "IA router" to BuildConfig.IAC33_BACKEND_URL.trimEnd('/') + "/v1/ai/status",
                                 "Mapas OSM" to "https://tile.openstreetmap.org/5/10/12.png",
                                 "USGS" to "https://earthquake.usgs.gov/"
                             ).map { (label, url) ->
