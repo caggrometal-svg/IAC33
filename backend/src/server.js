@@ -288,7 +288,7 @@ const server = http.createServer(async (req, res) => {
     const path = new URL(req.url, 'http://localhost').pathname;
     if (req.method === 'GET' && path === '/health') return send(res, 200, { ok: true, service: 'iac33-backend', status: 'alive' });
     if (req.method === 'GET' && path === '/v1/ai/diagnostics') {
-      const order = String(process.env.AI_PROVIDER_ORDER || 'gemini,groq,openrouter,deepseek,cloudflare,kilo,horde,pollinations,animica,ollama,anthropic,xai,openai')
+      const order = String(process.env.AI_PROVIDER_ORDER || 'kilo,ollama,gemini,groq,openrouter,cloudflare,deepseek,pollinations,horde,animica,anthropic,xai,openai')
         .split(',').map((id) => id.trim()).filter(Boolean);
       return send(res, 200, await buildAiDiagnostics(order));
     }
@@ -318,7 +318,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, {
         ok: true,
         service: 'iac33-ai',
-        router: 'free-pool',
+        router: 'hedged-failover',
         webContext: String(process.env.AI_WEB_CONTEXT || 'true').toLowerCase() !== 'false',
         providers: configured,
         providerStatus,
