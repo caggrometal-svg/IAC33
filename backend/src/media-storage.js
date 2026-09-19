@@ -59,7 +59,7 @@ export async function readPersistedAsset(id) {
   const row = result.rows[0];
   try {
     const object = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: row.object_key }));
-    const bytes = object.Body?.transformToByteArray ? Buffer.from(await object.Body.transformToByteArray()) : Buffer.from(await object.Body.transformToWebStream());
+    const bytes = object.Body?.transformToByteArray ? Buffer.from(await object.Body.transformToByteArray()) : Buffer.from(await new Response(object.Body).arrayBuffer());
     return { id: row.id, filePath: null, mimeType: row.mime_type, size: Number(row.size_bytes), createdAt: Number(row.created_ms), data: bytes };
   } catch { return null; }
 }
