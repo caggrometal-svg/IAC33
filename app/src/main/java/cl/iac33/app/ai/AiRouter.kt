@@ -19,10 +19,12 @@ class AiRouter(
         val userText = request.messages.lastOrNull { it.role == "user" }?.content.orEmpty()
         val intent = IntentClassifier.classify(userText)
 
-        // Local-capability intents are answered locally first for lower latency.
-        // General questions keep the configured preference (remote-first by default).
-        val orderedProviders = if (intent != AiIntent.GENERAL) {
-            providers.sortedBy { if (it.id == "local-fallback") 0 else 1 }
+        // Respect the configured provider order. Local fallback is only preferred
+        // when the user explicitly enabled "IA local primero".
+        val orderedProviders = if (intent != AiIntent.GENERAL &&
+            providers.firstOrNull()?.id == "local-fallback"
+        ) {
+            providers
         } else {
             providers
         }
