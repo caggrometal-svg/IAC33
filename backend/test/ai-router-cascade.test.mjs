@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generateSequential, ProviderPoolUnavailableError } from '../src/ai/router.ts';
+import { generateHedged, generateSequential, ProviderPoolUnavailableError } from '../src/ai/router.ts';
 import { ProviderHealthMonitor } from '../src/ai/provider-health.ts';
 
 function timeoutError() {
@@ -95,4 +95,49 @@ test('cascade returns a structured trace when every provider fails', async () =>
       return true;
     }
   );
+});
+
+
+test('hedged router removes a failed provider correctly and continues to the next batch', async () => {
+  const calls = [];
+  const health = new ProviderHealthMonitor();
+  const providers = {
+    first: {
+      key: null,
+      call: async () => {
+        calls.push('first');
+        throw new Error('first failed');
+      }
+    },
+    second: {
+      key: null,
+      call: async () => {
+        calls.push('second');
+        throw new Error('second failed');
+      }
+    },
+    third: {
+      key: null,
+      call: async () => {
+        calls.push('third');
+        return { text: 'hedged success', model: 'test-model' };
+      }
+    }
+  };
+
+  const started = Date.now();
+  const result = await generateHedged({
+    messages: [{ role: 'user', content: 'hola' }],
+    timeoutMs: 1000,
+    order: ['first', 'second', 'third'],
+    providers,
+    health,
+    providerTimeoutMs: () => 100,
+    maxParallel: 2
+  });
+
+  assert.ok(Date.now() - started < 700);
+  assert.equal(result.provider, 'third');
+  assert.equal(result.text, 'hedged success');
+  assert.deepEqual(calls, ['first', 'second', 'third']);
 });
