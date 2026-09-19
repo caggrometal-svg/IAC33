@@ -414,7 +414,13 @@ private fun EditorStudio(
         )
     }
 
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .navigationBarsPadding(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -485,19 +491,6 @@ private fun EditorStudio(
                     )
                 }
             }
-        }
-
-        Row(
-            Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            ToolPill("Luz") { }
-            ToolPill("Color") { }
-            ToolPill("Filtros") { }
-            ToolPill("Recorte") { }
-            ToolPill("Texto") { }
-            ToolPill("Audio") { }
-            ToolPill("Velocidad") { }
         }
 
         Card(Modifier.fillMaxWidth()) {
@@ -735,13 +728,6 @@ private fun LabeledSlider(
 }
 
 @Composable
-private fun ToolPill(label: String, onClick: () -> Unit) {
-    OutlinedButton(onClick = onClick, modifier = Modifier.width(96.dp)) {
-        Text(label)
-    }
-}
-
-@Composable
 private fun AiStudio(
     context: Context,
     prompt: String,
@@ -757,7 +743,10 @@ private fun AiStudio(
     val modes = listOf("Generador de imágenes IA", "Imagen→Imagen", "Generador de vídeos IA", "Imagen→Vídeo", "Vídeo→Vídeo", "TTS")
 
     Column(
-        Modifier.fillMaxSize(),
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .navigationBarsPadding(),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text("Estudio IA", style = MaterialTheme.typography.headlineSmall)
