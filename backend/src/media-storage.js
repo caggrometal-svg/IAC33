@@ -13,7 +13,7 @@ function normalizeDatabaseUrl(value) {
   if (!value) return value;
   try {
     const parsed = new URL(value);
-    if (!/(localhost|127\\.0\\.0\\.1)(:|\\/|$)/i.test(parsed.hostname)) parsed.searchParams.set('sslmode', 'verify-full');
+    if (!/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(parsed.hostname)) parsed.searchParams.set('sslmode', 'verify-full');
     return parsed.toString();
   } catch { return value; }
 }
