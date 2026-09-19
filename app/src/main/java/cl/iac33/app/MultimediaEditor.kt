@@ -218,6 +218,7 @@ fun MultimediaPanel() {
                     onOpen = { mediaPicker.launch(arrayOf("image/*", "video/*")) },
                     onJoin = { joinPicker.launch(arrayOf("video/*")) },
                     joinCount = joinSources.size,
+                    joinAvailable = joinSources.size >= 2,
                     onAudio = { audioPicker.launch(arrayOf("audio/*")) },
                     onExtractAudio = {
                         val uri = source ?: return@EditorStudio
@@ -241,6 +242,18 @@ fun MultimediaPanel() {
                     onFilter = { filter = it },
                     onAspect = { aspect = it },
                     onOverlayText = { overlayText = it.take(140) },
+                    onJoinExport = {
+                        if (joinSources.size < 2) return@EditorStudio
+                        exportBusy = true
+                        exportProgress = 5
+                        status = "Uniendo vídeos…"
+                        scope.launch {
+                            runCatching { engine.joinVideos(joinSources) { exportProgress = it } }
+                                .onSuccess { status = "Vídeos unidos: " + it.displayName; Toast.makeText(context, "Vídeo unido guardado en la galería", Toast.LENGTH_LONG).show() }
+                                .onFailure { status = "Error al unir vídeos"; Toast.makeText(context, it.message ?: "No se pudieron unir los vídeos", Toast.LENGTH_LONG).show() }
+                            exportBusy = false
+                        }
+                    },
                     onExport = {
                         val uri = source ?: return@EditorStudio
                         if (sourceKind == StudioMediaKind.VIDEO) {
@@ -358,6 +371,7 @@ private fun EditorStudio(
     onOpen: () -> Unit,
     onJoin: () -> Unit,
     joinCount: Int,
+    joinAvailable: Boolean,
     onAudio: () -> Unit,
     onExtractAudio: () -> Unit,
     onStartMs: (Long) -> Unit,
@@ -369,6 +383,7 @@ private fun EditorStudio(
     onFilter: (MediaFilter) -> Unit,
     onAspect: (AspectRatio) -> Unit,
     onOverlayText: (String) -> Unit,
+    onJoinExport: () -> Unit,
     onExport: () -> Unit
 ) {
     var player by remember { mutableStateOf<ExoPlayer?>(null) }
@@ -553,6 +568,7 @@ private fun EditorStudio(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = onAudio) { Text(if (audioUri == null) "Añadir audio" else "Cambiar audio") }
                     if (sourceKind == StudioMediaKind.VIDEO) OutlinedButton(onClick = onExtractAudio, enabled = !exportBusy) { Text("Extraer audio") }
+                    if (joinAvailable) OutlinedButton(onClick = onJoinExport, enabled = !exportBusy) { Text("Unir seleccionados") }
                     Button(onClick = onExport, enabled = source != null && !exportBusy) {
                         Text(if (exportBusy) "Exportando \${exportProgress}%" else "Exportar a galería")
                     }
