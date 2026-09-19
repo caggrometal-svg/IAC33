@@ -2,7 +2,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { Pool } from 'pg';
 import { allowedTransitions, validCommand } from './command-core.js';
-import { generateWithFreePool } from './ai-router.js';
+import { generateWithFreePool, streamWithFreePool } from './ai-router.js';
 import { providerHealth } from './ai/provider-health.ts';
 import { buildAiDiagnostics } from './routes/diagnostics.ts';
 import { sanitizeAssistantText, classifyIntent } from './ai-output.js';
@@ -338,6 +338,78 @@ const server = http.createServer(async (req, res) => {
       if (await readinessProbe()) return send(res, 200, { ok: true, service: 'iac33-backend', status: 'ready', database: true, deviceAuth: Boolean(devicePairingToken) });
       return send(res, 503, { ok: false, service: 'iac33-backend', status: 'not_ready', database: false });
     }
+    if (req.method === 'POST' && path === '/v1/ai/stream') {
+      if (!aiAllowed(req)) return send(res, 429, { ok: false, error: 'AI_RATE_LIMITED' });
+      if (aiInflight >= MAX_AI_INFLIGHT) return send(res, 503, { ok: false, error: 'AI_BUSY' });
+      aiInflight += 1;
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      req.on('aborted', abort);
+      res.on('close', abort);
+      let headersSent = false;
+      try {
+        const input = await body(req);
+        if (!Array.isArray(input.messages) || !input.messages.length || input.messages.length > MAX_AI_MESSAGES ||
+          input.messages.some((m) => !m || !['system','user','assistant'].includes(m.role) || typeof m.content !== 'string' ||
+            !m.content.trim() || m.content.length > MAX_AI_MESSAGE_CHARS)) {
+          return send(res, 400, { ok: false, error: 'INVALID_AI_REQUEST' });
+        }
+        const requestedTimeout = Number(input.timeoutMs || 30000);
+        const timeoutMs = Number.isFinite(requestedTimeout)
+          ? Math.min(Math.max(requestedTimeout, AI_MIN_TIMEOUT_MS), AI_MAX_TIMEOUT_MS)
+          : 30000;
+        const conversation = [
+          { role: 'system', content: IAC33_SYSTEM_PROMPT },
+          ...input.messages.filter((message) => message.role !== 'system').slice(-32)
+        ];
+        const webContext = await fetchWebContext(conversation, 1800);
+        const enrichedConversation = webContext.text
+          ? [conversation[0], { role: 'system', content: webContext.text }, ...conversation.slice(1)]
+          : conversation;
+
+        const sendEvent = (payload) => {
+          if (!headersSent) {
+            res.writeHead(200, {
+              'content-type': 'text/event-stream; charset=utf-8',
+              'cache-control': 'no-cache, no-store',
+              'connection': 'keep-alive',
+              'x-accel-buffering': 'no'
+            });
+            headersSent = true;
+          }
+          res.write('data: ' + JSON.stringify(payload) + '\n\n');
+        };
+
+        try {
+          const result = await streamWithFreePool({
+            messages: enrichedConversation,
+            timeoutMs,
+            signal: controller.signal,
+            onDelta: async (delta) => sendEvent({ delta })
+          });
+          if (!headersSent) sendEvent({ delta: result.text || '' });
+          sendEvent({
+            done: true,
+            provider: result.provider || null,
+            model: result.model || null,
+            sources: webContext.sources || []
+          });
+          sendEvent('[DONE]');
+          if (!res.writableEnded) res.end();
+        } catch (error) {
+          if (headersSent) {
+            sendEvent({ error: error?.name === 'AbortError' ? 'ABORTED' : 'AI_PROVIDERS_UNAVAILABLE' });
+            if (!res.writableEnded) res.end();
+          } else {
+            return send(res, 503, { ok: false, error: error?.name === 'AbortError' ? 'ABORTED' : 'AI_PROVIDERS_UNAVAILABLE' });
+          }
+        }
+      } finally {
+        req.off('aborted', abort);
+        res.off('close', abort);
+        aiInflight = Math.max(0, aiInflight - 1);
+      }
+    }
     if (req.method === 'POST' && path === '/v1/ai/generate') {
       if (!aiAllowed(req)) return send(res, 429, { ok: false, error: 'AI_RATE_LIMITED' });
       if (aiInflight >= MAX_AI_INFLIGHT) return send(res, 503, { ok: false, error: 'AI_BUSY' });
@@ -396,7 +468,7 @@ const server = http.createServer(async (req, res) => {
       const match = path.match(/^\/v1\/ai\/media\/jobs\/([^/]+)(?:\/file)?$/);
       if (!match) return send(res, 404, { ok: false, error: 'NOT_FOUND' });
       const id = decodeURIComponent(match[1]);
-      const job = getJob(id);
+      const job = await getJob(id);
       if (!job) return send(res, 404, { ok: false, error: 'MEDIA_JOB_NOT_FOUND' });
       if (req.method === 'GET' && path.endsWith('/file')) {
         const asset = job.assetId ? await readAsset(job.assetId) : null;
