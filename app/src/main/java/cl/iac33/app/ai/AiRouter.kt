@@ -16,18 +16,9 @@ class AiRouter(
             return OperationResult.Failure(OperationError.PROVIDER, "No AI providers configured")
         }
 
-        val userText = request.messages.lastOrNull { it.role == "user" }?.content.orEmpty()
-        val intent = IntentClassifier.classify(userText)
-
-        // Respect the configured provider order. Local fallback is only preferred
-        // when the user explicitly enabled "IA local primero".
-        val orderedProviders = if (intent != AiIntent.GENERAL &&
-            providers.firstOrNull()?.id == "local-fallback"
-        ) {
-            providers
-        } else {
-            providers
-        }
+        // The caller decides the order (remote-first or local-first). Never reorder
+        // providers by intent, because that silently forces canned local answers. 
+        val orderedProviders = providers
 
         var lastFailure: OperationResult.Failure? = null
         for (provider in orderedProviders) {
