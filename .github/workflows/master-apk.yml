@@ -3,6 +3,7 @@ name: IAC33 Master APK
 on:
   workflow_dispatch:
   push:
+    branches: [iac33-functional-upgrade-20260918]
     tags:
       - 'v*'
 
