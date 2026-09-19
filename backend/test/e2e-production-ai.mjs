@@ -52,6 +52,9 @@ assert(generate.response.ok, 'Production /v1/ai/generate failed: HTTP ' + genera
 assert(generate.json?.ok === true, 'Production AI returned ok != true');
 assert(typeof generate.json?.text === 'string' && generate.json.text.trim().length > 0, 'Production AI returned empty text');
 assert(generate.json.text.includes('IAC33_PROD_SMOKE_OK'), 'Production AI response did not contain the smoke marker');
+const freeProviders = new Set(['kilo', 'horde', 'pollinations', 'animica', 'ollama']);
+assert(freeProviders.has(String(generate.json?.provider || '').toLowerCase()),
+  'Production AI violated zero-cost routing: provider=' + String(generate.json?.provider || 'unknown'));
 
 console.log(JSON.stringify({
   ok: true,
