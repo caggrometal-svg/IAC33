@@ -37,29 +37,74 @@ export function useAiStudio(apiBaseUrl = "") {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const cancel = () => { abortRef.current?.abort(); abortRef.current = null; setBusy(false); };
+
+  const cancel = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setBusy(false);
+  };
 
   const generate = async (mode: AiMode, prompt: string, style?: string) => {
     cancel();
     const controller = new AbortController();
     abortRef.current = controller;
-    setBusy(true); setError(null);
+    setBusy(true);
+    setError(null);
+
+    const base = apiBaseUrl.replace(/\/$/, "");
+    const route = mode === "image"
+      ? "/v1/ai/text-to-image"
+      : mode === "video"
+        ? "/v1/ai/text-to-video"
+        : mode === "tts"
+          ? "/v1/ai/text-to-speech"
+          : "/v1/ai/generate";
+
+    const payload = mode === "tts"
+      ? { text: prompt }
+      : mode === "script"
+        ? { messages: [{ role: "user", content: `Create a production-ready script/copy. STYLE=${style || "default"}; REQUEST=${prompt}` }], timeoutMs: 12000 }
+        : { prompt: `${prompt.trim()}\nStyle: ${style || "default"}`, ratio: mode === "video" ? "1280:720" : undefined, duration: mode === "video" ? 5 : undefined };
+
     try {
-      const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/v1/ai/generate`, {
-        method: "POST", headers: { "content-type": "application/json" },
+      const res = await fetch(base + route, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         signal: controller.signal,
-        body: JSON.stringify({
-          messages: [{ role: "user", content: `IAC33 MEDIA MODE=${mode}; STYLE=${style || "default"}; REQUEST=${prompt}` }],
-          timeoutMs: 12000,
-        }),
+        body: JSON.stringify(payload),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `AI HTTP ${res.status}`);
+
+      if (mode === "script") return String(body.text || "");
+      if (body.assetUrl) return base + String(body.assetUrl);
+
+      if (body.jobId) {
+        const deadline = Date.now() + 120000;
+        while (Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
+          const statusRes = await fetch(base + "/v1/ai/media/jobs/" + encodeURIComponent(body.jobId), { signal: controller.signal });
+          const status = await statusRes.json().catch(() => ({}));
+          if (!statusRes.ok) throw new Error(status.error || `AI HTTP ${statusRes.status}`);
+          if (status.status === "SUCCEEDED" && status.assetUrl) return base + String(status.assetUrl);
+          if (status.status === "FAILED") throw new Error(status.error || "MEDIA_GENERATION_FAILED");
+        }
+        throw new Error("MEDIA_GENERATION_TIMEOUT");
+      }
+
       return String(body.text || "");
+    } catch (e) {
+      if ((e as DOMException).name !== "AbortError") setError(e instanceof Error ? e.message : "IA no disponible");
+      throw e;
     } finally {
-      if (abortRef.current === controller) { abortRef.current = null; setBusy(false); }
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setBusy(false);
+      }
     }
   };
+
   useEffect(() => () => abortRef.current?.abort(), []);
   return { generate, cancel, busy, error };
 }
@@ -158,8 +203,8 @@ export default function MultimediaStudio({ apiBaseUrl = "", onExport }: Multimed
           <div className="ms-scroll">{(["image","video","script","tts"] as AiMode[]).map(x=><button className={aiMode===x?"active":""} key={x} onClick={()=>setAiMode(x)}>{x==="image"?"Imagen IA":x==="video"?"Vídeo IA":x==="script"?"Guiones y Copy":"Voz IA"}</button>)}</div>
           <textarea rows={5} style={{width:"100%",boxSizing:"border-box"}} placeholder={aiMode==="tts"?"Texto para locución…":"Describe lo que quieres crear…"} value={prompt} onChange={e=>setPrompt(e.target.value)}/>
           <div className="ms-row" style={{marginTop:8}}><select value={style} onChange={e=>setStyle(e.target.value)}><option>cinematic</option><option>photorealistic</option><option>anime</option><option>documentary</option><option>cyberpunk</option><option>minimal</option></select><button onClick={runAi} disabled={ai.busy}>{ai.busy?"Generando…":"Generar"}</button><button onClick={ai.cancel} disabled={!ai.busy}>Cancelar</button></div>
-          {aiOutput && <pre style={{whiteSpace:"pre-wrap",marginTop:10}}>{aiOutput}</pre>}
-          <p style={{opacity:.6,fontSize:12}}>El backend actual de IAC33 expone /v1/ai/generate para texto. Imagen, vídeo y TTS requieren endpoints/proveedores de medios dedicados antes de poder producir archivos binarios reales.</p>
+          {aiOutput && <div style={{whiteSpace:"pre-wrap",marginTop:10,wordBreak:"break-word"}}>{/^https?:\\/\\//.test(aiOutput) ? <a href={aiOutput} target="_blank" rel="noreferrer">Abrir resultado generado</a> : aiOutput}</div>}\n          {ai.error && <div role="alert" style={{marginTop:8}}>{ai.error}</div>}
+          <p style={{opacity:.6,fontSize:12}}>Imagen, vídeo y voz usan los endpoints multimedia de IAC33. Las tareas de vídeo se consultan hasta obtener el archivo generado o un error explícito.</p>
         </section>
       </>}
 
