@@ -10,6 +10,8 @@ private val IAC33Surface = Color(0xFF0B0F12)
 private val IAC33Surface2 = Color(0xFF11171C)
 private val IAC33Neon = Color(0xFF00FF9D)
 private val IAC33NeonBlue = Color(0xFF00D9FF)
+private val IAC33Purple = Color(0xFFB388FF)
+private val IAC33Orange = Color(0xFFFFB74D)
 private val IAC33Text = Color(0xFFE8FFF7)
 private val IAC33Muted = Color(0xFF8AA39B)
 
@@ -34,9 +36,16 @@ private val IAC33Colors = darkColorScheme(
 )
 
 @Composable
-fun IAC33Theme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = IAC33Colors,
-        content = content
+fun IAC33Theme(accent: String = "green", content: @Composable () -> Unit) {
+    val primary = when (accent.lowercase()) {
+        "blue" -> IAC33NeonBlue
+        "purple" -> IAC33Purple
+        "orange" -> IAC33Orange
+        else -> IAC33Neon
+    }
+    val scheme = IAC33Colors.copy(
+        primary = primary,
+        onPrimary = IAC33Black
     )
+    MaterialTheme(colorScheme = scheme, content = content)
 }
