@@ -33,7 +33,7 @@ function cooldownFor(state, error) {
   if (state === 'TIMEOUT') {
     return boundedMs(process.env.AI_TIMEOUT_COOLDOWN_MS, 15000, 5000, 120000);
   }
-  return boundedMs(process.env.AI_OFFLINE_COOLDOWN_MS, 20000, 5000, 120000);
+  return 0;
 }
 
 function publicRecord(provider, record, now = Date.now()) {
@@ -54,7 +54,7 @@ function publicRecord(provider, record, now = Date.now()) {
   const remaining = Math.max(0, record.cooldownUntil - now);
   return {
     provider,
-    state: remaining > 0 ? record.state : 'ONLINE',
+    state: record.state,
     failures: record.failures,
     cooldownUntil: remaining > 0 ? record.cooldownUntil : 0,
     cooldownRemainingMs: remaining,

@@ -46,28 +46,30 @@ test('returns the first responding free provider', async () => {
   assert.ok(calls >= 1);
 });
 
-test('retries the same provider after HTTP 503', async () => {
-  process.env.AI_PROVIDER_ORDER = 'kilo';
-  process.env.AI_PROVIDER_RETRIES = '2';
-  let calls = 0;
-  globalThis.fetch = async () => {
-    calls += 1;
-    if (calls === 1) {
+test('moves immediately to the next provider after HTTP 503 without retrying the failed one', async () => {
+  process.env.AI_PROVIDER_ORDER = 'kilo,openrouter';
+  process.env.OPENROUTER_API_KEY = 'test-openrouter';
+  process.env.AI_PROVIDER_RETRIES = '3';
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    const host = new URL(String(url)).hostname;
+    calls.push(host);
+    if (host === 'api.kilo.ai') {
       return new Response(
         JSON.stringify({ error: { message: 'temporarily unavailable' } }),
         { status: 503, headers: { 'content-type': 'application/json' } }
       );
     }
     return new Response(
-      JSON.stringify({ choices: [{ message: { content: 'recovered' } }] }),
+      JSON.stringify({ choices: [{ message: { content: 'cascade-ok' } }] }),
       { status: 200, headers: { 'content-type': 'application/json' } }
     );
   };
 
   const result = await router.generateWithFreePool({ messages, timeoutMs: 3000 });
-  assert.equal(result.provider, 'kilo');
-  assert.equal(result.text, 'recovered');
-  assert.equal(calls, 2);
+  assert.equal(result.provider, 'openrouter');
+  assert.equal(result.text, 'cascade-ok');
+  assert.deepEqual(calls, ['api.kilo.ai', 'openrouter.ai']);
 });
 
 test('fails over silently from a 503 provider to the next provider', async () => {
@@ -110,8 +112,10 @@ test('reports internal diagnostics when every explicitly selected provider fails
     (error) => {
       assert.equal(error.message, 'AI_PROVIDERS_UNAVAILABLE');
       assert.equal(error.diagnostics.length, 2);
-      assert.equal(error.diagnostics[0].state, 'FAILED');
-      assert.equal(error.diagnostics[1].state, 'FAILED');
+      assert.equal(error.trace.openrouter, 'OFFLINE');
+      assert.equal(error.trace.groq, 'OFFLINE');
+      assert.equal(error.diagnostics[0].state, 'OFFLINE');
+      assert.equal(error.diagnostics[1].state, 'OFFLINE');
       return true;
     }
   );
@@ -160,13 +164,12 @@ test('uses a global connectivity budget', async () => {
   assert.equal(observedSignal.aborted, false);
 });
 
-test('aborts losing providers after the winner responds', async () => {
+test('does not start the next provider while the current provider can succeed', async () => {
   process.env.AI_PROVIDER_ORDER = 'kilo,horde';
-  process.env.AI_PROVIDER_RETRIES = '1';
-  let loserAborted = false;
-
-  globalThis.fetch = async (url, options) => {
+  const requestedHosts = [];
+  globalThis.fetch = async (url) => {
     const host = new URL(String(url)).hostname;
+    requestedHosts.push(host);
     if (host === 'api.kilo.ai') {
       await new Promise((resolve) => setTimeout(resolve, 30));
       return new Response(
@@ -174,30 +177,13 @@ test('aborts losing providers after the winner responds', async () => {
         { status: 200, headers: { 'content-type': 'application/json' } }
       );
     }
-    if (host === 'aihorde.net') {
-      return new Promise((resolve, reject) => {
-        if (options.signal.aborted) {
-          loserAborted = true;
-          const error = new Error('aborted');
-          error.name = 'AbortError';
-          reject(error);
-          return;
-        }
-        options.signal.addEventListener('abort', () => {
-          loserAborted = true;
-          const error = new Error('aborted');
-          error.name = 'AbortError';
-          reject(error);
-        }, { once: true });
-      });
-    }
     throw new Error('unexpected host');
   };
 
   const result = await router.generateWithFreePool({ messages, timeoutMs: 2000 });
   assert.equal(result.provider, 'kilo');
   assert.equal(result.text, 'winner');
-  assert.equal(loserAborted, true);
+  assert.deepEqual(requestedHosts, ['api.kilo.ai']);
 });
 
 test('rejects unsafe configurable endpoints and uses the trusted Kilo endpoint', async () => {

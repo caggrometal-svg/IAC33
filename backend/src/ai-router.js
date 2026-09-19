@@ -58,13 +58,6 @@ function providerTimeoutMs(id) {
   return Math.min(Math.max(Number(process.env.AI_PROVIDER_TIMEOUT_MS || 4500), 1200), 10000);
 }
 
-function boundedRetryDelay(error, attempt, remainingMs) {
-  const exponential = Math.min(1000, 150 * (2 ** Math.max(0, attempt - 1)));
-  const requested = retryAfterMs(error) || exponential;
-  const jitter = Math.floor(Math.random() * 75);
-  return Math.min(1000, requested + jitter, Math.max(0, remainingMs - 1));
-}
-
 function readRetryAfter(response) {
   const value = response?.headers?.get('retry-after');
   if (!value) return 0;

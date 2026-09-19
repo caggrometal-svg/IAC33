@@ -35,6 +35,17 @@ test('health is liveness and does not depend on database availability', async ()
   });
 });
 
+test('AI diagnostics route exposes the in-memory provider health state', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(baseUrl + '/v1/ai/diagnostics');
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.router, 'sequential-cascade');
+    assert.ok(body.providers && typeof body.providers === 'object');
+  });
+});
+
 test('protected control endpoints reject missing authorization', async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/v1/commands`, {
