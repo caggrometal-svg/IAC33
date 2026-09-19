@@ -43,32 +43,22 @@ jobs:
         run: npm test
       - name: Unit tests and build
         run: gradle testDebugUnitTest assembleDebug --parallel --build-cache --no-daemon --console=plain
-      - name: Android Keystore E2E
-        timeout-minutes: 20
+      - name: Android Connected E2E
+        timeout-minutes: 25
         uses: ReactiveCircus/android-emulator-runner@v2
         with:
           api-level: 34
           arch: x86_64
           profile: pixel_2
           force-avd-creation: true
-          cores: 2
-          ram-size: 2048M
-          heap-size: 512M
-          disk-size: 4096M
-          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -no-metrics -no-accel
-          disable-linux-hw-accel: true
+          cores: 4
+          ram-size: 4096M
+          heap-size: 768M
+          disk-size: 8192M
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -no-metrics
           disable-animations: true
-          script: |
-            set -eu
-            timeout 90s adb wait-for-device
-            timeout 5m sh -c 'until adb shell getprop sys.boot_completed | grep -m 1 "1"; do sleep 2; done'
-            timeout 3m sh -c 'until adb shell cmd package list packages >/dev/null 2>&1 && adb shell cmd activity get-config >/dev/null 2>&1; do sleep 2; done'
-            timeout 2m sh -c 'until adb shell dumpsys keystore2 >/dev/null 2>&1; do sleep 2; done'
-            adb shell settings put global verifier_verify_adb_installs 0 || true
-            adb shell settings put global package_verifier_enable 0 || true
-            adb shell settings put global package_verifier_user_consent 1 || true
-            adb shell getprop ro.build.version.sdk
-            timeout 10m gradle connectedDebugAndroidTest --no-daemon --stacktrace --console=plain
+          script: bash scripts/android-connected-e2e.sh
+
       - name: Upload Android test reports
         if: always()
         uses: actions/upload-artifact@v7
