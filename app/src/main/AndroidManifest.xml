@@ -13,6 +13,9 @@
         android:theme="@style/Theme.IAC33"
         android:icon="@drawable/ic_launcher"
         android:roundIcon="@drawable/ic_launcher">
+        <meta-data
+            android:name="cl.iac33.app.DISABLE_STARTUP_WORKERS"
+            android:value="false" />
         <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
