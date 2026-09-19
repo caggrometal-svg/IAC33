@@ -233,6 +233,106 @@ async function runwayPoll(taskId) {
   return json;
 }
 
+function assertVideoData(value) {
+  if (typeof value !== 'string' || !/^data:video\/(?:mp4|webm|quicktime|x-m4v);base64,[A-Za-z0-9+/=]+$/i.test(value)) {
+    throw providerError(400, 'Invalid video input', 'INVALID_MEDIA_VIDEO');
+  }
+  const comma = value.indexOf(',');
+  const bytes = Buffer.byteLength(value.slice(comma + 1), 'base64');
+  const max = 18 * 1024 * 1024;
+  if (bytes > max) throw providerError(413, 'Video input too large', 'MEDIA_VIDEO_TOO_LARGE');
+  return value;
+}
+
+async function genericVideoToVideoSubmit(provider, prompt, videoData, ratio, duration) {
+  const endpoint = String(process.env['IAC33_' + provider.toUpperCase() + '_VIDEO_TO_VIDEO_ENDPOINT'] || '').trim();
+  const statusEndpoint = String(process.env['IAC33_' + provider.toUpperCase() + '_VIDEO_TO_VIDEO_STATUS_ENDPOINT'] || '').trim();
+  const key = String(process.env[provider.toUpperCase() + '_API_KEY'] || '').trim();
+  if (!endpoint || !statusEndpoint || !key) throw providerError(503, provider + ' video-to-video provider not configured', 'MEDIA_PROVIDER_UNCONFIGURED');
+  const response = await fetchWithTimeout(endpoint, {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      prompt,
+      video: videoData,
+      ratio: videoRatio(ratio),
+      duration: Math.min(Math.max(Number(duration) || 5, 2), MAX_VIDEO_SECONDS)
+    })
+  }, 30_000);
+  const json = await responseJson(response);
+  if (!response.ok || !(json.id || json.jobId || json.taskId)) {
+    throw providerError(response.status || 502, provider + ' video-to-video task submission failed');
+  }
+  return { taskId: String(json.id || json.jobId || json.taskId), provider, statusEndpoint };
+}
+
+async function pollGenericVideoToVideo(provider, submit) {
+  const key = String(process.env[provider.toUpperCase() + '_API_KEY'] || '').trim();
+  const endpoint = String(submit.statusEndpoint || '').trim();
+  if (!endpoint || !key) throw providerError(503, provider + ' video-to-video status endpoint not configured', 'MEDIA_PROVIDER_UNCONFIGURED');
+  const response = await fetchWithTimeout(endpoint.replace(/\/$/, '') + '/' + encodeURIComponent(submit.taskId), {
+    headers: { authorization: 'Bearer ' + key }
+  }, 20_000);
+  const json = await responseJson(response);
+  if (!response.ok) throw providerError(response.status || 502, provider + ' video-to-video task lookup failed');
+  return json;
+}
+
+async function pollAndDownloadVideoToVideo(job, submit) {
+  const started = Date.now();
+  const timeoutMs = Math.min(Math.max(Number(process.env.IAC33_MEDIA_JOB_TIMEOUT_MS || 8 * 60 * 1000), 60_000), 15 * 60 * 1000);
+  while (Date.now() - started < timeoutMs) {
+    const task = await pollGenericVideoToVideo(submit.provider, submit);
+    const status = extractTaskStatus(task);
+    job.updatedAt = Date.now();
+    if (status === 'SUCCEEDED' || status === 'COMPLETED') {
+      const url = extractVideoUrl(task);
+      if (!url) throw providerError(502, 'Video-to-video task completed without an output URL');
+      const response = await fetchWithTimeout(url, { headers: { accept: 'video/mp4,video/*' } }, 90_000);
+      if (!response.ok) throw providerError(response.status, 'Transformed video download failed');
+      return saveAsset(await responseBytes(response), 'video/mp4', 'mp4');
+    }
+    if (status === 'FAILED' || status === 'CANCELED') throw providerError(502, 'Video-to-video task failed');
+    await sleep(5_000 + Math.floor(Math.random() * 1_000));
+  }
+  throw providerError(504, 'Video-to-video job timeout', 'MEDIA_JOB_TIMEOUT');
+}
+
+async function generateVideoToVideoJob(prompt, videoData, ratio, duration) {
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  const job = { id, kind: 'VIDEO_TO_VIDEO', status: 'QUEUED', provider: null, createdAt: now, updatedAt: now, assetId: null };
+  jobs.set(id, job);
+  queueMicrotask(async () => {
+    try {
+      job.status = 'RUNNING';
+      job.updatedAt = Date.now();
+      let lastError = null;
+      const providers = String(process.env.IAC33_VIDEO_TO_VIDEO_PROVIDERS || '').split(',').map(v => v.trim().toLowerCase()).filter(Boolean);
+      for (const provider of providers) {
+        try {
+          const submit = await genericVideoToVideoSubmit(provider, prompt, videoData, ratio, duration);
+          job.provider = provider;
+          const asset = await pollAndDownloadVideoToVideo(job, submit);
+          job.assetId = asset.id;
+          job.status = 'SUCCEEDED';
+          job.updatedAt = Date.now();
+          return;
+        } catch (error) {
+          lastError = error;
+          if (error?.code === 'MEDIA_PROVIDER_UNCONFIGURED') continue;
+        }
+      }
+      throw lastError || providerError(503, 'No video-to-video provider available', 'MEDIA_PROVIDERS_UNAVAILABLE');
+    } catch (error) {
+      job.status = 'FAILED';
+      job.updatedAt = Date.now();
+      console.error('IAC33 video-to-video job failed:', error?.code || 'MEDIA_JOB_ERROR');
+    }
+  });
+  return job;
+}
+
 async function genericVideoSubmit(provider, prompt, imageData, ratio, duration) {
   const endpoint = String(process.env['IAC33_' + provider.toUpperCase() + '_ENDPOINT'] || '').trim();
   const key = String(process.env[provider.toUpperCase() + '_API_KEY'] || '').trim();
@@ -415,6 +515,10 @@ export async function textToVideo(input) {
 
 export async function imageToVideo(input) {
   return generateVideoJob('IMAGE_TO_VIDEO', assertPrompt(input.prompt), assertImageData(input.image), input.ratio, input.duration);
+}
+
+export async function videoToVideo(input) {
+  return generateVideoToVideoJob(assertPrompt(input.prompt), assertVideoData(input.video), input.ratio, input.duration);
 }
 
 export async function textToSpeech(input) {

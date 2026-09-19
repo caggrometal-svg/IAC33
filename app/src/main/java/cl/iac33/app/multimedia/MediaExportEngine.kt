@@ -8,7 +8,9 @@ import android.graphics.Canvas
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
+import android.media.MediaExtractor
 import android.media.MediaScannerConnection
+import android.media.MediaMuxer
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -40,6 +42,7 @@ import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 enum class MediaFilter { NONE, BW, SEPIA, VINTAGE, CYBERPUNK }
 
@@ -156,7 +159,9 @@ class MediaExportEngine(private val context: Context) {
         brightness: Float = 0f,
         contrast: Float = 0f,
         saturation: Float = 1f,
-        filter: MediaFilter = MediaFilter.NONE
+        filter: MediaFilter = MediaFilter.NONE,
+        aspect: AspectRatio = AspectRatio.ORIGINAL,
+        textOverlay: TextOverlaySpec? = null
     ): ExportedMedia = withContext(Dispatchers.IO) {
         val bitmap = decodeBitmap(source) ?: error("No se pudo decodificar la imagen")
         val matrix = ColorMatrix().apply {
@@ -172,23 +177,156 @@ class MediaExportEngine(private val context: Context) {
                 ))
             })
             when (filter) {
-                MediaFilter.BW -> setSaturation(0f)
-                MediaFilter.SEPIA -> set(sepiaMatrix())
-                MediaFilter.VINTAGE -> set(vintageMatrix())
-                MediaFilter.CYBERPUNK -> set(cyberpunkMatrix())
+                MediaFilter.BW -> postConcat(ColorMatrix().apply { setSaturation(0f) })
+                MediaFilter.SEPIA -> postConcat(ColorMatrix(sepiaMatrix()))
+                MediaFilter.VINTAGE -> postConcat(ColorMatrix(vintageMatrix()))
+                MediaFilter.CYBERPUNK -> postConcat(ColorMatrix(cyberpunkMatrix()))
                 MediaFilter.NONE -> Unit
             }
         }
 
-        val outputBitmap = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-        Canvas(outputBitmap).drawBitmap(
-            bitmap, 0f, 0f,
-            Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                colorFilter = ColorMatrixColorFilter(matrix)
+        val cropped = cropBitmapForAspect(bitmap, aspect)
+        if (cropped !== bitmap) bitmap.recycle()
+        val outputSize = targetImageSize(cropped.width, cropped.height, aspect)
+        val outputBitmap = Bitmap.createBitmap(outputSize.first, outputSize.second, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(outputBitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { colorFilter = ColorMatrixColorFilter(matrix) }
+        canvas.drawBitmap(cropped, null, android.graphics.Rect(0, 0, outputBitmap.width, outputBitmap.height), paint)
+        if (cropped !== bitmap) cropped.recycle()
+        textOverlay?.takeIf { it.text.isNotBlank() }?.let { overlay ->
+            val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.WHITE
+                textSize = overlay.fontSizeSp * context.resources.displayMetrics.scaledDensity
+                setShadowLayer(8f, 2f, 2f, android.graphics.Color.BLACK)
+                textAlign = Paint.Align.CENTER
             }
-        )
-        bitmap.recycle()
+            canvas.drawText(overlay.text.take(140), outputBitmap.width / 2f, outputBitmap.height - textPaint.textSize, textPaint)
+        }
         saveBitmapToGallery(outputBitmap)
+    }
+
+    suspend fun joinVideos(
+        sources: List<Uri>,
+        onProgress: (Int) -> Unit = {}
+    ): ExportedMedia = withContext(Dispatchers.IO) {
+        require(sources.size >= 2) { "Selecciona al menos dos vídeos" }
+        val output = File.createTempFile("iac33_join_", ".mp4", context.cacheDir)
+        try {
+            val items = sources.map { uri ->
+                EditedMediaItem.Builder(MediaItem.fromUri(uri)).build()
+            }
+            val sequence = EditedMediaItemSequence.withAudioAndVideoFrom(items)
+            val composition = Composition.Builder(sequence).build()
+            suspendCancellableCoroutine<ExportedMedia> { continuation ->
+                val transformer = Transformer.Builder(context)
+                    .setVideoMimeType(MimeTypes.VIDEO_H264)
+                    .setAudioMimeType(MimeTypes.AUDIO_AAC)
+                    .addListener(object : Transformer.Listener {
+                        override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                            onProgress(100)
+                            if (continuation.isActive) {
+                                runCatching { saveVideoToGallery(output) }
+                                    .onSuccess { continuation.resume(it) }
+                                    .onFailure { continuation.resumeWithException(it) }
+                            }
+                        }
+                        override fun onError(
+                            composition: Composition,
+                            exportResult: ExportResult,
+                            exportException: ExportException
+                        ) {
+                            if (continuation.isActive) continuation.resumeWithException(exportException)
+                        }
+                    })
+                    .build()
+                continuation.invokeOnCancellation { runCatching { transformer.cancel() } }
+                onProgress(5)
+                transformer.start(composition, output.absolutePath)
+            }
+        } finally {
+            output.delete()
+        }
+    }
+
+    suspend fun extractAudio(source: Uri): ExportedMedia = withContext(Dispatchers.IO) {
+        val extractor = MediaExtractor()
+        try {
+            extractor.setDataSource(context, source, null)
+            var audioTrack = -1
+            var format: android.media.MediaFormat? = null
+            for (index in 0 until extractor.trackCount) {
+                val candidate = extractor.getTrackFormat(index)
+                if (candidate.getString(android.media.MediaFormat.KEY_MIME)?.startsWith("audio/") == true) {
+                    audioTrack = index
+                    format = candidate
+                    break
+                }
+            }
+            require(audioTrack >= 0 && format != null) { "El vídeo no contiene pista de audio" }
+            extractor.selectTrack(audioTrack)
+            val output = File.createTempFile("iac33_audio_", ".m4a", context.cacheDir)
+            val muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            try {
+                val muxTrack = muxer.addTrack(format)
+                muxer.start()
+                val buffer = java.nio.ByteBuffer.allocate(1024 * 1024)
+                val info = android.media.MediaCodec.BufferInfo()
+                while (true) {
+                    info.offset = 0
+                    info.size = extractor.readSampleData(buffer, 0)
+                    if (info.size < 0) break
+                    info.presentationTimeUs = extractor.sampleTime
+                    info.flags = extractor.sampleFlags
+                    muxer.writeSampleData(muxTrack, buffer, info)
+                    extractor.advance()
+                }
+                muxer.stop()
+                saveAudioToGallery(output)
+            } finally {
+                runCatching { muxer.release() }
+                output.delete()
+            }
+        } finally {
+            extractor.release()
+        }
+    }
+
+    private fun cropBitmapForAspect(bitmap: Bitmap, aspect: AspectRatio): Bitmap {
+        if (aspect == AspectRatio.ORIGINAL) return bitmap
+        val target = when (aspect) {
+            AspectRatio.PORTRAIT -> 9f / 16f
+            AspectRatio.LANDSCAPE -> 16f / 9f
+            AspectRatio.SQUARE -> 1f
+            AspectRatio.ORIGINAL -> bitmap.width.toFloat() / bitmap.height
+        }
+        val source = bitmap.width.toFloat() / bitmap.height
+        if (kotlin.math.abs(source - target) < 0.01f) return bitmap
+        val width: Int
+        val height: Int
+        if (source > target) {
+            height = bitmap.height
+            width = (height * target).roundToInt().coerceAtLeast(1)
+        } else {
+            width = bitmap.width
+            height = (width / target).roundToInt().coerceAtLeast(1)
+        }
+        val left = ((bitmap.width - width) / 2).coerceAtLeast(0)
+        val top = ((bitmap.height - height) / 2).coerceAtLeast(0)
+        return Bitmap.createBitmap(bitmap, left, top, width, height)
+    }
+
+    private fun targetImageSize(width: Int, height: Int, aspect: AspectRatio): Pair<Int, Int> {
+        val maxDimension = 1920
+        return when (aspect) {
+            AspectRatio.PORTRAIT -> 1080 to 1920
+            AspectRatio.LANDSCAPE -> 1920 to 1080
+            AspectRatio.SQUARE -> 1080 to 1080
+            AspectRatio.ORIGINAL -> {
+                if (maxOf(width, height) <= maxDimension) width to height
+                else if (width >= height) maxDimension to (height * maxDimension / width).coerceAtLeast(1)
+                else (width * maxDimension / height).coerceAtLeast(1) to maxDimension
+            }
+        }
     }
 
     private fun buildVideoEffects(request: ExportRequest): List<Effect> {
@@ -300,6 +438,32 @@ class MediaExportEngine(private val context: Context) {
             throw error
         } finally {
             bitmap.recycle()
+        }
+    }
+
+    private fun saveAudioToGallery(file: File): ExportedMedia {
+        val displayName = "IAC33_AUDIO_" + System.currentTimeMillis() + ".m4a"
+        val values = ContentValues().apply {
+            put(MediaStore.Audio.Media.DISPLAY_NAME, displayName)
+            put(MediaStore.Audio.Media.MIME_TYPE, "audio/mp4")
+            if (Build.VERSION.SDK_INT >= 29) {
+                put(MediaStore.Audio.Media.RELATIVE_PATH, Environment.DIRECTORY_MUSIC + "/IAC33")
+                put(MediaStore.Audio.Media.IS_PENDING, 1)
+            }
+        }
+        val resolver = context.contentResolver
+        val uri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
+            ?: error("No se pudo crear el destino de audio")
+        try {
+            resolver.openOutputStream(uri)?.use { output -> file.inputStream().use { input -> input.copyTo(output) } }
+                ?: error("No se pudo escribir el audio")
+            if (Build.VERSION.SDK_INT >= 29) {
+                resolver.update(uri, ContentValues().apply { put(MediaStore.Audio.Media.IS_PENDING, 0) }, null, null)
+            }
+            return ExportedMedia(uri, "audio/mp4", displayName)
+        } catch (error: Throwable) {
+            resolver.delete(uri, null, null)
+            throw error
         }
     }
 

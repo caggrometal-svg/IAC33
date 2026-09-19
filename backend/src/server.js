@@ -7,7 +7,7 @@ import { sanitizeAssistantText, classifyIntent } from './ai-output.js';
 import { validateGptCommand, commandDigest } from './gpt-command-bridge.js';
 import { verifyGitHubActionsToken } from './github-oidc.js';
 import { fetchLatestSeismic } from './seismic.js';
-import { textToImage, imageToImage, textToVideo, imageToVideo, textToSpeech, getJob, readAsset, jobPublic } from './media-service.js';
+import { textToImage, imageToImage, textToVideo, imageToVideo, videoToVideo, textToSpeech, getJob, readAsset, jobPublic } from './media-service.js';
 
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_AI_MESSAGES = 64;
@@ -415,6 +415,20 @@ const server = http.createServer(async (req, res) => {
       try {
         const input = await body(req, 12 * 1024 * 1024);
         const job = await imageToVideo(input);
+        return send(res, 202, { ok: true, ...jobPublic(job) });
+      } catch (error) {
+        const status = Number.isInteger(error?.status) ? error.status : 503;
+        return send(res, status, { ok: false, error: error?.code || 'MEDIA_GENERATION_FAILED' });
+      } finally {
+        aiInflight = Math.max(0, aiInflight - 1);
+      }
+    }
+    if (req.method === 'POST' && path === '/v1/ai/video-to-video') {
+      if (!aiAllowed(req) || aiInflight >= MAX_AI_INFLIGHT) return send(res, 429, { ok: false, error: 'AI_RATE_LIMITED' });
+      aiInflight += 1;
+      try {
+        const input = await body(req, 24 * 1024 * 1024);
+        const job = await videoToVideo(input);
         return send(res, 202, { ok: true, ...jobPublic(job) });
       } catch (error) {
         const status = Number.isInteger(error?.status) ? error.status : 503;
