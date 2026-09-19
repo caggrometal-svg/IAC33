@@ -192,7 +192,7 @@ async function callCloudflare(messages, timeoutMs, account, model, parentSignal)
   }
 }
 
-async async function callAnthropic(messages, timeoutMs, parentSignal) {
+async function callAnthropic(messages, timeoutMs, parentSignal) {
   const { signal, cleanup } = timeoutSignal(parentSignal, timeoutMs);
   try {
     const system = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\\n');
