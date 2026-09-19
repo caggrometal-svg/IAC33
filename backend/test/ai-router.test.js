@@ -193,44 +193,30 @@ test('uses a global connectivity budget', async () => {
   assert.equal(observedSignal.aborted, false);
 });
 
-test('aborts losing providers after the winner responds', async () => {
+test('does not race fallback providers before the first candidate fails', async () => {
+  router.resetRouterState();
   process.env.AI_PROVIDER_ORDER = 'kilo,horde';
   process.env.AI_PROVIDER_RETRIES = '1';
-  let loserAborted = false;
+  const requested = [];
 
-  globalThis.fetch = async (url, options) => {
+  globalThis.fetch = async (url) => {
     const host = new URL(String(url)).hostname;
+    requested.push(host);
     if (host === 'api.kilo.ai') {
-      await new Promise((resolve) => setTimeout(resolve, 30));
       return new Response(
         JSON.stringify({ choices: [{ message: { content: 'winner' } }]}),
         { status: 200, headers: { 'content-type': 'application/json' } }
       );
     }
-    if (host === 'aihorde.net') {
-      return new Promise((resolve, reject) => {
-        if (options.signal.aborted) {
-          loserAborted = true;
-          const error = new Error('aborted');
-          error.name = 'AbortError';
-          reject(error);
-          return;
-        }
-        options.signal.addEventListener('abort', () => {
-          loserAborted = true;
-          const error = new Error('aborted');
-          error.name = 'AbortError';
-          reject(error);
-        }, { once: true });
-      });
-    }
-    throw new Error('unexpected host');
+    throw new Error('fallback should not start before the first candidate fails');
   };
 
   const result = await router.generateWithFreePool({ messages, timeoutMs: 2000 });
   assert.equal(result.provider, 'kilo');
   assert.equal(result.text, 'winner');
-  assert.equal(loserAborted, true);
+  assert.deepEqual(requested, ['api.kilo.ai']);
+
+  router.resetRouterState();
 });
 
 test('rejects unsafe configurable endpoints and uses the trusted Kilo endpoint', async () => {
