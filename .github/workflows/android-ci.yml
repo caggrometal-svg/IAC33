@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, iac33-functional-upgrade-20260918]
 
 permissions:
   contents: read

@@ -28,11 +28,12 @@ function providerError(status, message, retryAfterMs = 0) {
 const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const FREE_PROVIDER_DEFAULTS = ['gemini', 'groq', 'openrouter', 'deepseek', 'cloudflare', 'kilo', 'horde', 'pollinations', 'animica', 'ollama', 'andrew2'];
 const SERIAL_PREFERRED_PROVIDERS = new Set(['ollama']);
-const MAX_PARALLEL_PROVIDERS = 3;
+const MAX_PARALLEL_PROVIDERS = 2;
 const PROVIDER_CIRCUIT_FAILURES = Math.min(Math.max(Number(process.env.AI_CIRCUIT_FAILURES || 2), 1), 5);
 const PROVIDER_CIRCUIT_OPEN_MS = Math.min(Math.max(Number(process.env.AI_CIRCUIT_OPEN_MS || 30000), 5000), 300000);
 const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024;
 const providerHealth = new Map();
+const providerPerformance = new Map();
 
 const parseList = (value, fallback) =>
   String(value || fallback).split(',').map((item) => item.trim()).filter(Boolean);
@@ -480,9 +481,19 @@ function circuitOpen(id) {
 
 function recordSuccess(id) {
   providerHealth.delete(id);
+  const current = providerPerformance.get(id) || { successCount: 0, failureCount: 0, lastSuccessAt: 0 };
+  current.successCount += 1;
+  current.lastSuccessAt = Date.now();
+  current.lastFailureAt = 0;
+  providerPerformance.set(id, current);
 }
 
 function recordFailure(id, error) {
+  const performance = providerPerformance.get(id) || { successCount: 0, failureCount: 0, lastSuccessAt: 0 };
+  performance.failureCount += 1;
+  performance.lastFailureAt = Date.now();
+  providerPerformance.set(id, performance);
+
   if (!isRetryable(error)) return;
   const current = providerHealth.get(id) || { failures: 0, openUntil: 0 };
   current.failures += 1;
@@ -492,6 +503,32 @@ function recordFailure(id, error) {
   providerHealth.set(id, current);
 }
 
+function providerScore(id, orderIndex = 0) {
+  const performance = providerPerformance.get(id);
+  const health = connectivityHealthCache.get(id)?.result;
+  let score = 0;
+
+  if (health?.state === 'OK') score += 50;
+  if (health?.state === 'AUTH_ERROR' || health?.state === 'UNAVAILABLE' || health?.state === 'TIMEOUT' || health?.state === 'NETWORK_ERROR') score -= 80;
+
+  if (performance?.lastSuccessAt) {
+    const ageMs = Date.now() - performance.lastSuccessAt;
+    if (ageMs < 10 * 60 * 1000) score += 40;
+    else if (ageMs < 60 * 60 * 1000) score += 15;
+  }
+  score += Math.min(20, (performance?.successCount || 0) * 2);
+  score -= Math.min(60, (performance?.failureCount || 0) * 5);
+
+  // Preserve configured order as a tie-breaker.
+  return score - orderIndex * 0.01;
+}
+
+export function rankProviderIds(ids) {
+  return [...ids]
+    .map((id, index) => ({ id, score: providerScore(id, index), index }))
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .map(({ id }) => id);
+}
 
 const PROVIDER_HEALTH_URLS = {
   openai: 'https://api.openai.com/v1/models',
@@ -645,6 +682,7 @@ export function formatConnectivityDiagnostics(diagnostic) {
 
 export function resetRouterState() {
   providerHealth.clear();
+  providerPerformance.clear();
   connectivityHealthCache.clear();
 }
 
@@ -689,7 +727,8 @@ export async function generateWithFreePool({ messages, timeoutMs = 18000, signal
       return true;
     });
 
-    if (!available.length) {
+    const ranked = rankProviderIds(available);
+    if (!ranked.length) {
       const error = new Error('AI_PROVIDERS_UNAVAILABLE');
       error.diagnostics = diagnostics;
       throw error;
@@ -743,10 +782,15 @@ export async function generateWithFreePool({ messages, timeoutMs = 18000, signal
       throw lastError || providerError(504, 'Provider timeout');
     }
 
-    for (let offset = 0; offset < available.length;) {
-      const first = available[offset];
-      const batchSize = SERIAL_PREFERRED_PROVIDERS.has(first) ? 1 : Math.min(MAX_PARALLEL_PROVIDERS, available.length - offset);
-      const batch = available.slice(offset, offset + batchSize);
+    for (let offset = 0; offset < ranked.length;) {
+      const first = ranked[offset];
+      const firstScore = providerScore(first, offset);
+      // Always give the best candidate a clean first attempt. Only after a failure
+      // are two fallback providers raced, reducing duplicate requests and rate-limit pressure.
+      const batchSize = SERIAL_PREFERRED_PROVIDERS.has(first) || offset === 0 || firstScore >= 45
+        ? 1
+        : Math.min(MAX_PARALLEL_PROVIDERS, ranked.length - offset);
+      const batch = ranked.slice(offset, offset + batchSize);
       const pending = batch.map((id) => {
         const started = Date.now();
         const promise = attemptProvider(id)

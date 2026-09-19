@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.graphics.Color as AndroidColor
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -26,9 +27,12 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
@@ -50,6 +54,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -94,7 +99,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            val colors = MaterialTheme.colorScheme
             val settingsStore = remember { SettingsStore(this@MainActivity) }
             var settings by remember { mutableStateOf(settingsStore.load()) }
             var selected by rememberSaveable { mutableIntStateOf(0) }
@@ -133,7 +137,16 @@ class MainActivity : ComponentActivity() {
                 onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
             }
 
-            MaterialTheme {
+            val accentColor = parseAccentColor(settings.accentColorHex)
+            val baseColorScheme = if (androidx.compose.foundation.isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
+            val appColorScheme = baseColorScheme.copy(
+                primary = accentColor,
+                secondary = accentColor,
+                tertiary = accentColor,
+                onPrimary = contrastingTextColor(accentColor)
+            )
+
+            MaterialTheme(colorScheme = appColorScheme) {
                 Scaffold(
                     topBar = {
                         TopAppBar(
@@ -381,32 +394,60 @@ private fun C33Panel(chatCount: Int) {
 private fun RedPanel(connectivityStatus: ConnectivityStatus) {
     val scope = rememberCoroutineScope()
     var probe by remember { mutableStateOf<String?>(null) }
+    var diagnostic by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var diagnosticBusy by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize()) {
         Text("Red", style = MaterialTheme.typography.headlineSmall)
-        Text("Conectividad del dispositivo y backend.", style = MaterialTheme.typography.bodySmall)
+        Text("Conectividad del dispositivo, backend, Router y proveedores.", style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.height(10.dp))
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp)) {
-                Text("Estado", style = MaterialTheme.typography.titleMedium)
+                Text("Estado del dispositivo", style = MaterialTheme.typography.titleMedium)
                 Text(connectivityStatus.name)
                 Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = {
-                        busy = true
-                        scope.launch(Dispatchers.IO) {
-                            val value = runCatching { probeBackend(BuildConfig.IAC33_BACKEND_URL) }
-                                .getOrElse { "Error de red: " + (it.message ?: "desconocido") }
-                            probe = value
-                            busy = false
-                        }
-                    },
-                    enabled = !busy
-                ) { Text(if (busy) "Comprobando…" else "Probar backend") }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Button(
+                        onClick = {
+                            busy = true
+                            scope.launch(Dispatchers.IO) {
+                                val value = runCatching { probeBackend(BuildConfig.IAC33_BACKEND_URL) }
+                                    .getOrElse { "Error de red: " + (it.message ?: "desconocido") }
+                                probe = value
+                                busy = false
+                            }
+                        },
+                        enabled = !busy
+                    ) { Text(if (busy) "Comprobando…" else "Probar backend") }
+
+                    OutlinedButton(
+                        onClick = {
+                            diagnosticBusy = true
+                            scope.launch(Dispatchers.IO) {
+                                diagnostic = runCatching {
+                                    runConnectivityDiagnostic(BuildConfig.IAC33_BACKEND_URL, connectivityStatus.name)
+                                }.getOrElse { "Diagnóstico: error de red · " + (it.message ?: "desconocido") }
+                                diagnosticBusy = false
+                            }
+                        },
+                        enabled = !diagnosticBusy
+                    ) { Text(if (diagnosticBusy) "Analizando…" else "Diagnóstico IA") }
+                }
                 probe?.let {
                     Spacer(Modifier.height(6.dp))
                     Text(it, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+
+        diagnostic?.let { value ->
+            Spacer(Modifier.height(8.dp))
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("Diagnóstico IA", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(6.dp))
+                    Text(value, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -703,6 +744,12 @@ private fun SettingsPanel(
             )
         }
         item {
+            AccentColorSetting(
+                accentColorHex = settings.accentColorHex,
+                onChange = { onChange(settings.copy(accentColorHex = it)) }
+            )
+        }
+        item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp)) {
                     Text("IAC33 " + BuildConfig.VERSION_NAME, style = MaterialTheme.typography.titleMedium)
@@ -735,6 +782,126 @@ private fun SettingSwitch(
             }
             Switch(checked = checked, onCheckedChange = onCheckedChange)
         }
+    }
+}
+
+@Composable
+private fun AccentColorSetting(
+    accentColorHex: String,
+    onChange: (String) -> Unit
+) {
+    val presets = listOf(
+        "#4F46E5" to "Azul",
+        "#0284C7" to "Cian",
+        "#059669" to "Verde",
+        "#EA580C" to "Naranja",
+        "#C026D3" to "Violeta"
+    )
+    var draft by remember(accentColorHex) { mutableStateOf(accentColorHex) }
+    val validDraft = Regex("^#[0-9A-Fa-f]{6}$").matches(draft.trim())
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Color de la interfaz", style = MaterialTheme.typography.titleMedium)
+            Text("Cambia el color principal de IAC33. El ajuste queda guardado en el dispositivo.", style = MaterialTheme.typography.bodySmall)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(presets) { (hex, label) ->
+                    val color = parseAccentColor(hex)
+                    Button(
+                        onClick = {
+                            draft = hex
+                            onChange(hex)
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = color,
+                            contentColor = contrastingTextColor(color)
+                        )
+                    ) { Text(label) }
+                }
+            }
+            OutlinedTextField(
+                value = draft,
+                onValueChange = { raw ->
+                    draft = raw.filter { it.isDigit() || it.lowercaseChar() in 'a'..'f' || it == '#' }.take(7).uppercase()
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Color HEX") },
+                placeholder = { Text("#4F46E5") },
+                singleLine = true
+            )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(if (validDraft) draft else "HEX no válido", style = MaterialTheme.typography.bodySmall)
+                Button(
+                    onClick = { onChange(draft.trim().uppercase()) },
+                    enabled = validDraft && draft.trim().uppercase() != accentColorHex
+                ) { Text("Aplicar") }
+            }
+        }
+    }
+}
+
+private fun parseAccentColor(hex: String): Color =
+    runCatching { Color(AndroidColor.parseColor(hex)) }.getOrDefault(Color(0xFF4F46E5))
+
+private fun contrastingTextColor(color: Color): Color {
+    val value = (0.299f * color.red) + (0.587f * color.green) + (0.114f * color.blue)
+    return if (value > 0.6f) Color.Black else Color.White
+}
+
+private fun runConnectivityDiagnostic(baseUrl: String, deviceConnectivity: String): String {
+    val cleanBase = baseUrl.trimEnd('/')
+    val health = httpJsonRequest(cleanBase + "/health", "GET", null)
+    if (health.first !in 200..299) {
+        return "DISPOSITIVO: $deviceConnectivity\nANDROID→BACKEND: ERROR · HTTP ${health.first}\n${health.second.take(500)}"
+    }
+
+    val messages = org.json.JSONArray().apply {
+        put(org.json.JSONObject().put("role", "user").put("content", "diagnostico_conectividad"))
+    }
+    val payload = org.json.JSONObject()
+        .put("messages", messages)
+        .put("timeoutMs", 30000)
+    val result = httpJsonRequest(cleanBase + "/v1/ai/generate", "POST", payload.toString())
+
+    val json = runCatching { org.json.JSONObject(result.second) }.getOrNull()
+    val text = json?.optString("text").orEmpty()
+    val error = json?.optString("error").orEmpty()
+
+    return buildString {
+        append("DISPOSITIVO: ").append(deviceConnectivity).append('\n')
+        append("ANDROID→BACKEND: OK · health HTTP ").append(health.first)
+        append(" · diagnóstico HTTP ").append(result.first).append('\n')
+        if (text.isNotBlank()) append(text)
+        else if (error.isNotBlank()) append("BACKEND: ").append(error)
+        else append(result.second.take(2500))
+    }
+}
+
+private fun httpJsonRequest(urlString: String, method: String, bodyJson: String?): Pair<Int, String> {
+    val connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
+        requestMethod = method
+        connectTimeout = 8_000
+        readTimeout = 35_000
+        setRequestProperty("Accept", "application/json")
+        if (bodyJson != null) {
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json")
+        }
+    }
+    return try {
+        if (bodyJson != null) {
+            connection.outputStream.use { it.write(bodyJson.toByteArray(Charsets.UTF_8)) }
+        }
+        val status = connection.responseCode
+        val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+        val raw = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        status to raw
+    } finally {
+        connection.disconnect()
     }
 }
 
