@@ -626,7 +626,3 @@ setInterval(cleanupExpiredMedia, 15 * 60 * 1000).unref();
 
 export { assetUrl, jobPublic };
 
-
-void markInterruptedMediaJobs().catch((error) => {
-  if (mediaPersistenceEnabled()) console.error('IAC33 media persistence startup check failed:', error?.message || error);
-});
