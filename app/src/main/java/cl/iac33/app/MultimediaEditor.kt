@@ -533,6 +533,9 @@ private fun EditorStudio(
     aspect: AspectRatio,
     overlayText: String,
     layers: List<TimelineLayer>,
+    timelineClips: List<TimelineClipState>,
+    selectedClipIndex: Int,
+    playheadMs: Long,
     exportBusy: Boolean,
     exportProgress: Int,
     status: String,
@@ -544,6 +547,12 @@ private fun EditorStudio(
     onExtractAudio: () -> Unit,
     onStartMs: (Long) -> Unit,
     onEndMs: (Long) -> Unit,
+    onPlayheadMs: (Long) -> Unit,
+    onSelectClip: (Int) -> Unit,
+    onSplitClip: () -> Unit,
+    onMoveClipUp: () -> Unit,
+    onMoveClipDown: () -> Unit,
+    onDeleteClip: () -> Unit,
     onBrightness: (Float) -> Unit,
     onContrast: (Float) -> Unit,
     onSaturation: (Float) -> Unit,
@@ -663,21 +672,57 @@ private fun EditorStudio(
 
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Línea de tiempo · ${formatDuration(durationMs)}", style = MaterialTheme.typography.titleMedium)
-                Row(
-                    Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
+                Text(
+                    "NLE · " + timelineClips.size + " clip(s) · " + formatDuration(durationMs),
+                    style = MaterialTheme.typography.titleMedium
+                )
+                if (timelineClips.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        timelineClips.forEachIndexed { index, clip ->
+                            val selected = index == selectedClipIndex
+                            Card(
+                                onClick = { onSelectClip(index) },
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer
+                                    else Color(0xFF1E293B)
+                                )
+                            ) {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(clip.name)
+                                        Text(
+                                            formatDuration(clip.startMs) + " → " + formatDuration(clip.endMs ?: durationMs),
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
+                                    OutlinedButton(onClick = onMoveClipUp, enabled = selected && index > 0) { Text("↑") }
+                                    OutlinedButton(onClick = onMoveClipDown, enabled = selected && index < timelineClips.lastIndex) { Text("↓") }
+                                    OutlinedButton(onClick = onSplitClip, enabled = selected) { Text("Cortar") }
+                                    OutlinedButton(onClick = onDeleteClip, enabled = selected && timelineClips.size > 1) { Text("Borrar") }
+                                }
+                            }
+                        }
+                    }
+                } else {
                     layers.forEach { layer ->
                         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))) {
-                            Column(Modifier.padding(10.dp)) {
-                                Text(layer.name, color = Color.White)
-                                Text(layer.kind.name, color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
+                            Column(Modifier.padding(8.dp)) {
+                                Text(layer.name)
+                                Text(layer.kind.name, style = MaterialTheme.typography.labelSmall)
                             }
                         }
                     }
                 }
                 if (durationMs > 0L) {
+                    Text("Playhead " + formatDuration(playheadMs))
+                    Slider(
+                        value = playheadMs.toFloat().coerceIn(0f, durationMs.toFloat()),
+                        onValueChange = { onPlayheadMs(it.toLong()) },
+                        valueRange = 0f..durationMs.toFloat()
+                    )
                     Text("Inicio ${formatDuration(startMs)}")
                     Slider(
                         value = startMs.toFloat(),
