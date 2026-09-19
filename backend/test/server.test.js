@@ -46,6 +46,13 @@ test('AI diagnostics route exposes the in-memory provider health state', async (
   });
 });
 
+test('legacy Andrew2 Bridge V3 endpoint rejects missing authorization', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(baseUrl + '/api/v1/bridge/v3/commands');
+    assert.equal(response.status, 401);
+  });
+});
+
 test('protected control endpoints reject missing authorization', async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/v1/commands`, {
