@@ -754,7 +754,7 @@ private fun AiStudio(
     onImportResult: (Uri) -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    val modes = listOf("Imagen", "Imagen→Imagen", "Vídeo", "Imagen→Vídeo", "TTS")
+    val modes = listOf("Imagen", "Imagen→Imagen", "Vídeo", "Imagen→Vídeo", "Vídeo→Vídeo", "TTS")
 
     Column(
         Modifier.fillMaxSize(),
@@ -817,6 +817,7 @@ private suspend fun requestAiStudio(
         "Imagen→Imagen" -> "/v1/ai/image-to-image"
         "Vídeo" -> "/v1/ai/text-to-video"
         "Imagen→Vídeo" -> "/v1/ai/image-to-video"
+        "Vídeo→Vídeo" -> "/v1/ai/video-to-video"
         "TTS" -> "/v1/ai/text-to-speech"
         else -> error("Modo IA no soportado")
     }
@@ -833,11 +834,16 @@ private suspend fun requestAiStudio(
             put("ratio", "1280:720")
             put("duration", 5)
         }
+        if (mode == "Vídeo→Vídeo") {
+            require(source != null) { "Importa un vídeo para transformarlo" }
+            require(context.contentResolver.getType(source).orEmpty().startsWith("video/")) { "La fuente debe ser un vídeo" }
+            put("video", uriAsDataUri(context, source, 18 * 1024 * 1024))
+        }
     }
 
     val response = postJson(backend.trimEnd('/') + endpoint, json.toString())
     if (response.status !in 200..299) error(response.body)
-    if (mode == "Vídeo" || mode == "Imagen→Vídeo") {
+    if (mode == "Vídeo" || mode == "Imagen→Vídeo" || mode == "Vídeo→Vídeo") {
         val initial = JSONObject(response.body)
         val jobId = initial.getString("jobId")
         return@withContext pollMediaJob(backend, jobId)
@@ -890,12 +896,13 @@ private fun pollMediaJob(backend: String, jobId: String): String {
     error("Tiempo de espera agotado")
 }
 
-private fun uriAsDataUri(context: Context, uri: Uri): String {
-    val mime = context.contentResolver.getType(uri).orEmpty().ifBlank { "image/png" }
+private fun uriAsDataUri(context: Context, uri: Uri, maxBytes: Int = 12 * 1024 * 1024): String {
+    val mime = context.contentResolver.getType(uri).orEmpty().ifBlank { "application/octet-stream" }
     val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-        ?: error("No se pudo leer la imagen")
-    require(bytes.size <= 12 * 1024 * 1024) { "La imagen supera 12 MB" }
-    return "data:${mime};base64,${Base64.encodeToString(bytes, Base64.NO_WRAP)}"
+        ?: error("No se pudo leer el archivo")
+    require(bytes.size <= maxBytes) { "El archivo supera el límite de " + (maxBytes / 1024 / 1024) + " MB" }
+    require(mime.startsWith("image/") || mime.startsWith("video/")) { "Tipo de medio no compatible" }
+    return "data:" + mime + ";base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
 }
 
 private suspend fun downloadAssetToGallery(context: Context, url: String): Uri? = withContext(Dispatchers.IO) {
