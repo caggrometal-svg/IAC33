@@ -27,7 +27,7 @@ function providerError(status, message, retryAfterMs = 0) {
 
 const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const FREE_PROVIDER_DEFAULTS = ['gemini', 'groq', 'openrouter', 'deepseek', 'cloudflare', 'kilo', 'horde', 'pollinations', 'animica', 'ollama', 'andrew2'];
-const SERIAL_PREFERRED_PROVIDERS = new Set();
+const SERIAL_PREFERRED_PROVIDERS = new Set(['ollama']);
 const MAX_PARALLEL_PROVIDERS = 3;
 const PROVIDER_CIRCUIT_FAILURES = Math.min(Math.max(Number(process.env.AI_CIRCUIT_FAILURES || 2), 1), 5);
 const PROVIDER_CIRCUIT_OPEN_MS = Math.min(Math.max(Number(process.env.AI_CIRCUIT_OPEN_MS || 30000), 5000), 300000);
