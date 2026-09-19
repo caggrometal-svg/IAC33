@@ -1,7 +1,9 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <application>
         <meta-data
             android:name="cl.iac33.app.DISABLE_STARTUP_WORKERS"
-            android:value="true" />
+            android:value="true"
+            tools:replace="android:value" />
     </application>
 </manifest>
