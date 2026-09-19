@@ -26,7 +26,7 @@ function providerError(status, message, retryAfterMs = 0) {
   return error;
 }
 
-const FREE_PROVIDER_DEFAULTS = ['kilo', 'ollama', 'gemini', 'groq', 'openrouter', 'cloudflare', 'deepseek', 'pollinations', 'horde', 'animica', 'anthropic', 'xai', 'openai'];
+const FREE_PROVIDER_DEFAULTS = ['kilo', 'horde', 'pollinations', 'animica', 'ollama'];
 const parseList = (value, fallback) => String(value || fallback).split(',').map((item) => item.trim()).filter(Boolean);
 const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024;
 
