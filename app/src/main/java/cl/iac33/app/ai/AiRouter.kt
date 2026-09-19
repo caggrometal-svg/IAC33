@@ -16,16 +16,9 @@ class AiRouter(
             return OperationResult.Failure(OperationError.PROVIDER, "No AI providers configured")
         }
 
-        val userText = request.messages.lastOrNull { it.role == "user" }?.content.orEmpty()
-        val intent = IntentClassifier.classify(userText)
-
-        // Local-capability intents are answered locally first for lower latency.
-        // General questions keep the configured preference (remote-first by default).
-        val orderedProviders = if (intent != AiIntent.GENERAL) {
-            providers.sortedBy { if (it.id == "local-fallback") 0 else 1 }
-        } else {
-            providers
-        }
+        // The caller decides the order (remote-first or local-first). Never reorder
+        // providers by intent, because that silently forces canned local answers. 
+        val orderedProviders = providers
 
         var lastFailure: OperationResult.Failure? = null
         for (provider in orderedProviders) {
