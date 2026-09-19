@@ -46,13 +46,16 @@ if [ "$status" -eq 0 ]; then
   exit 0
 fi
 
-if grep -Eq 'INSTALL_FAILED_VERIFICATION_FAILURE|adb protocol fault|Failed to install split APK|Integrity verification timed out|device offline|device unauthorized|more than one device/emulator' "$LOG"; then
+if grep -Eq 'INSTALL_FAILED_VERIFICATION_FAILURE|adb protocol fault|Failed to install split APK|Integrity verification timed out|device offline|device unauthorized|more than one device/emulator|Instrumentation run failed to complete|Process crashed|Failed to start Emulator console' "$LOG"; then
   echo "Transient emulator/ADB/package-install failure detected; refreshing ADB and retrying once."
   adb kill-server || true
   adb start-server
   sleep 3
   wait_for_android
   configure_verifier
+  echo "Collecting emulator diagnostics before retry..."
+  adb logcat -d -t 400 > /tmp/iac33-logcat-before-retry.txt || true
+  adb shell dumpsys activity processes > /tmp/iac33-activity-before-retry.txt || true
   run_connected_tests
   exit $?
 fi
