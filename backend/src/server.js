@@ -44,6 +44,16 @@ const controlToken = process.env.CONTROL_TOKEN || '';
 const devicePairingToken = process.env.DEVICE_PAIRING_TOKEN || '';
 const databaseUrl = process.env.DATABASE_URL || '';
 const databaseNeedsSsl = databaseUrl && !/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(databaseUrl);
+function normalizeDatabaseUrl(value) {
+  if (!value || !databaseNeedsSsl) return value;
+  try {
+    const parsed = new URL(value);
+    parsed.searchParams.set('sslmode', 'verify-full');
+    return parsed.toString();
+  } catch {
+    return value;
+  }
+}
 const pool = databaseUrl ? new Pool({ connectionString: normalizeDatabaseUrl(databaseUrl),  connectionTimeoutMillis: READY_TIMEOUT_MS, idleTimeoutMillis: 10000, max: 5 }) : null;
 const aiWindow = new Map();
 let aiInflight = 0;
