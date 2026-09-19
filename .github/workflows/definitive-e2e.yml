@@ -17,7 +17,7 @@ concurrency:
 jobs:
   definitive-e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16
@@ -45,6 +45,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Verify production health
+        timeout-minutes: 2
         run: |
           curl --fail --silent --show-error https://iac33-backend.onrender.com/health
           curl --fail --silent --show-error https://iac33-backend.onrender.com/ready
@@ -53,23 +54,28 @@ jobs:
         with:
           node-version: '24'
       - name: Install backend dependencies
+        timeout-minutes: 3
         working-directory: backend
         run: npm install --ignore-scripts --no-audit --no-fund
       - name: Apply database schema
+        timeout-minutes: 1
         run: psql -v ON_ERROR_STOP=1 -f backend/schema.sql
       - name: Start backend
+        timeout-minutes: 1
         run: |
           export PORT=3000
           node backend/src/start.js > /tmp/iac33-backend.log 2>&1 &
           for i in $(seq 1 30); do
-            if curl -fsS "$E2E_BASE_URL/health" | grep -q '\"ok\":true'; then exit 0; fi
+            if curl -fsS "$E2E_BASE_URL/health" | grep -q '"ok":true'; then exit 0; fi
             sleep 1
           done
           cat /tmp/iac33-backend.log
           exit 1
       - name: Run backend device lifecycle E2E
+        timeout-minutes: 3
         run: node backend/test/e2e-device-control.mjs
       - name: Run GPT bridge E2E
+        timeout-minutes: 3
         run: node backend/test/e2e-gpt-bridge.mjs
       - name: Backend log on failure
         if: failure()
