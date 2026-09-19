@@ -143,6 +143,39 @@ test('default order starts with the free Kilo gateway', async () => {
   assert.ok(requestedUrls.includes('https://api.kilo.ai/api/gateway/chat/completions'));
 });
 
+
+test('prioritizes a provider that has recently succeeded', async () => {
+  router.resetRouterState();
+  process.env.AI_PROVIDER_ORDER = 'kilo';
+  process.env.AI_PROVIDER_RETRIES = '1';
+
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({ choices: [{ message: { content: 'known-good' } }] }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+
+  const warmup = await router.generateWithFreePool({ messages, timeoutMs: 1000 });
+  assert.equal(warmup.provider, 'kilo');
+
+  process.env.AI_PROVIDER_ORDER = 'horde,kilo';
+  const requested = [];
+  globalThis.fetch = async (url) => {
+    requested.push(String(url));
+    return new Response(
+      JSON.stringify({ choices: [{ message: { content: 'adaptive-ok' } }] }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+  };
+
+  const result = await router.generateWithFreePool({ messages, timeoutMs: 1000 });
+  assert.equal(result.provider, 'kilo');
+  assert.equal(result.text, 'adaptive-ok');
+  assert.match(requested[0], /api\.kilo\.ai/);
+
+  router.resetRouterState();
+});
+
 test('uses a global connectivity budget', async () => {
   process.env.AI_PROVIDER_ORDER = 'kilo';
   process.env.AI_TOTAL_TIMEOUT_MS = '1500';
