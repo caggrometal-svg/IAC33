@@ -26,8 +26,9 @@ function providerError(status, message, retryAfterMs = 0) {
 }
 
 const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
-const FREE_PROVIDER_DEFAULTS = ['andrew2', 'ollama', 'kilo', 'horde', 'pollinations'];
-const SERIAL_PREFERRED_PROVIDERS = new Set(['andrew2', 'ollama']);
+const FREE_PROVIDER_DEFAULTS = ['gemini', 'groq', 'openrouter', 'deepseek', 'cloudflare', 'kilo', 'horde', 'pollinations', 'animica', 'ollama', 'andrew2'];
+const SERIAL_PREFERRED_PROVIDERS = new Set();
+const MAX_PARALLEL_PROVIDERS = 3;
 const PROVIDER_CIRCUIT_FAILURES = Math.min(Math.max(Number(process.env.AI_CIRCUIT_FAILURES || 2), 1), 5);
 const PROVIDER_CIRCUIT_OPEN_MS = Math.min(Math.max(Number(process.env.AI_CIRCUIT_OPEN_MS || 30000), 5000), 300000);
 const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024;
@@ -69,11 +70,11 @@ function sleep(ms, signal) {
 }
 
 function providerTimeoutMs(id) {
-  if (id === 'ollama') return Math.min(Math.max(Number(process.env.IAC33_OLLAMA_TIMEOUT_MS || 8500), 1500), 20000);
-  if (id === 'kilo') return Math.min(Math.max(Number(process.env.AI_KILO_TIMEOUT_MS || 2500), 1000), 6000);
-  if (id === 'horde') return Math.min(Math.max(Number(process.env.AI_HORDE_TIMEOUT_MS || 4500), 2000), 8000);
-  if (id === 'pollinations') return Math.min(Math.max(Number(process.env.AI_POLLINATIONS_TIMEOUT_MS || 2500), 1000), 6000);
-  return Math.min(Math.max(Number(process.env.AI_PROVIDER_TIMEOUT_MS || 2200), 900), 7000);
+  if (id === 'ollama') return Math.min(Math.max(Number(process.env.IAC33_OLLAMA_TIMEOUT_MS || 12000), 2000), 20000);
+  if (id === 'kilo') return Math.min(Math.max(Number(process.env.AI_KILO_TIMEOUT_MS || 4500), 1500), 8000);
+  if (id === 'horde') return Math.min(Math.max(Number(process.env.AI_HORDE_TIMEOUT_MS || 7000), 2500), 10000);
+  if (id === 'pollinations') return Math.min(Math.max(Number(process.env.AI_POLLINATIONS_TIMEOUT_MS || 4500), 1500), 8000);
+  return Math.min(Math.max(Number(process.env.AI_PROVIDER_TIMEOUT_MS || 4500), 1200), 10000);
 }
 
 function boundedRetryDelay(error, attempt, remainingMs) {
@@ -322,7 +323,7 @@ async function callKilo(messages, timeoutMs, attempt = 1, parentSignal) {
         messages,
         stream: false,
         stop: STOP_SEQUENCES,
-        max_tokens: Math.min(Number(process.env.KILO_MAX_TOKENS || 512), 1024)
+        max_tokens: Math.min(Number(process.env.KILO_MAX_TOKENS || 1200), 2048)
       }),
       signal
     });
@@ -388,7 +389,7 @@ async function callAiHorde(messages, timeoutMs, attempt = 1, parentSignal) {
       body: JSON.stringify({
         prompt,
         params: {
-          max_length: Math.min(Number(process.env.AI_HORDE_MAX_LENGTH || 256), 512),
+          max_length: Math.min(Number(process.env.AI_HORDE_MAX_LENGTH || 768), 1024),
           max_context_length: Math.min(Number(process.env.AI_HORDE_MAX_CONTEXT || 4096), 8192),
           temperature: Number(process.env.AI_HORDE_TEMPERATURE || 0.4),
           stop_sequence: STOP_SEQUENCES
@@ -497,8 +498,8 @@ export async function generateWithFreePool({ messages, timeoutMs = 18000, signal
   )];
   const diagnostics = [];
   const totalBudgetMs = Math.min(
-    Math.max(Number(process.env.AI_TOTAL_TIMEOUT_MS || 9000), 2500),
-    15000
+    Math.max(Number(process.env.AI_TOTAL_TIMEOUT_MS || 20000), 5000),
+    30000
   );
   const budgetMs = Math.min(timeoutMs, totalBudgetMs);
   const deadline = Date.now() + budgetMs;
@@ -584,7 +585,7 @@ export async function generateWithFreePool({ messages, timeoutMs = 18000, signal
 
     for (let offset = 0; offset < available.length;) {
       const first = available[offset];
-      const batchSize = SERIAL_PREFERRED_PROVIDERS.has(first) ? 1 : Math.min(2, available.length - offset);
+      const batchSize = SERIAL_PREFERRED_PROVIDERS.has(first) ? 1 : Math.min(MAX_PARALLEL_PROVIDERS, available.length - offset);
       const batch = available.slice(offset, offset + batchSize);
       const pending = batch.map((id) => {
         const started = Date.now();
