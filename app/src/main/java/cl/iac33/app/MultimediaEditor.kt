@@ -280,7 +280,7 @@ fun MultimediaPanel() {
                                 }
                                 exportBusy = false
                                 result.onSuccess {
-                                    status = "Exportado: \${it.displayName}"
+                                    status = "Exportado: ${it.displayName}"
                                     Toast.makeText(context, "Guardado en la galería", Toast.LENGTH_LONG).show()
                                 }.onFailure {
                                     status = "Error de exportación"
@@ -296,7 +296,7 @@ fun MultimediaPanel() {
                                 }
                                 exportBusy = false
                                 result.onSuccess {
-                                    status = "Exportado: \${it.displayName}"
+                                    status = "Exportado: ${it.displayName}"
                                     Toast.makeText(context, "Imagen guardada en la galería", Toast.LENGTH_LONG).show()
                                 }.onFailure {
                                     status = "Error de imagen"
@@ -502,7 +502,7 @@ private fun EditorStudio(
 
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Línea de tiempo · \${formatDuration(durationMs)}", style = MaterialTheme.typography.titleMedium)
+                Text("Línea de tiempo · ${formatDuration(durationMs)}", style = MaterialTheme.typography.titleMedium)
                 Row(
                     Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -517,13 +517,13 @@ private fun EditorStudio(
                     }
                 }
                 if (durationMs > 0L) {
-                    Text("Inicio \${formatDuration(startMs)}")
+                    Text("Inicio ${formatDuration(startMs)}")
                     Slider(
                         value = startMs.toFloat(),
                         onValueChange = { onStartMs(it.toLong().coerceIn(0L, max(0L, endMs - 100L))) },
                         valueRange = 0f..durationMs.toFloat()
                     )
-                    Text("Fin \${formatDuration(endMs.coerceAtMost(durationMs))}")
+                    Text("Fin ${formatDuration(endMs.coerceAtMost(durationMs))}")
                     Slider(
                         value = endMs.toFloat().coerceAtMost(durationMs.toFloat()),
                         onValueChange = { onEndMs(it.toLong().coerceIn(startMs + 100L, durationMs)) },
@@ -583,7 +583,7 @@ private fun EditorStudio(
                         FilterChip(
                             selected = speed == candidate,
                             onClick = { onSpeed(candidate) },
-                            label = { Text("\${candidate}x") }
+                            label = { Text("${candidate}x") }
                         )
                     }
                 }
@@ -602,7 +602,7 @@ private fun EditorStudio(
                     if (sourceKind == StudioMediaKind.VIDEO) OutlinedButton(onClick = onExtractAudio, enabled = !exportBusy) { Text("Extraer audio") }
                     if (joinAvailable) OutlinedButton(onClick = onJoinExport, enabled = !exportBusy) { Text("Unir seleccionados") }
                     Button(onClick = onExport, enabled = source != null && !exportBusy) {
-                        Text(if (exportBusy) "Exportando \${exportProgress}%" else "Exportar a galería")
+                        Text(if (exportBusy) "Exportando ${exportProgress}%" else "Exportar a galería")
                     }
                 }
             }
@@ -895,7 +895,7 @@ private fun uriAsDataUri(context: Context, uri: Uri): String {
     val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
         ?: error("No se pudo leer la imagen")
     require(bytes.size <= 12 * 1024 * 1024) { "La imagen supera 12 MB" }
-    return "data:\${mime};base64,\${Base64.encodeToString(bytes, Base64.NO_WRAP)}"
+    return "data:${mime};base64,${Base64.encodeToString(bytes, Base64.NO_WRAP)}"
 }
 
 private suspend fun downloadAssetToGallery(context: Context, url: String): Uri? = withContext(Dispatchers.IO) {
@@ -911,7 +911,7 @@ private suspend fun downloadAssetToGallery(context: Context, url: String): Uri? 
         val mime = connection.contentType.orEmpty().substringBefore(';').ifBlank { "application/octet-stream" }
         val isVideo = mime.startsWith("video/")
         val collection = if (isVideo) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-        val name = "IAC33_AI_\${System.currentTimeMillis()}" + if (isVideo) ".mp4" else ".png"
+        val name = "IAC33_AI_${System.currentTimeMillis()}" + if (isVideo) ".mp4" else ".png"
         val values = ContentValues().apply {
             if (isVideo) {
                 put(MediaStore.Video.Media.DISPLAY_NAME, name)
