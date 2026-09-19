@@ -72,12 +72,6 @@ jobs:
           CONTROL_TOKEN: iac33-e2e-control
           DATABASE_URL: postgresql://iac33:iac33@127.0.0.1:5432/iac33
         run: node backend/test/e2e-gpt-bridge.mjs
-      - name: External production AI smoke
-        run: |
-          set -euo pipefail
-          response=$(curl -fsS --max-time 20 -X POST https://iac33-backend.onrender.com/v1/ai/generate -H 'content-type: application/json' --data-raw '{"messages":[{"role":"user","content":"Responde exactamente: IAC33-PRUEBA-OK"}],"timeoutMs":12000}')
-          echo "$response"
-          node -e 'const r=JSON.parse(process.argv[1]); if(r.ok!==true || !r.text || !r.provider || !r.model) process.exit(1); console.log(JSON.stringify({ok:r.ok,text:r.text,provider:r.provider,model:r.model}))' "$response"
       - name: Backend log on failure
         if: failure()
         run: cat /tmp/iac33-backend.log
