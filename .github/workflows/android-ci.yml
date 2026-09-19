@@ -42,12 +42,17 @@ jobs:
         working-directory: backend
         run: npm test
       - name: Unit tests and build
-        run: gradle testDebugUnitTest assembleDebug --parallel --build-cache --no-daemon --console=plain
+        run: gradle testDebugUnitTest assembleDebug assembleDebugAndroidTest --parallel --build-cache --no-daemon --console=plain
+      - name: Verify Android E2E artifacts
+        run: |
+          set -euo pipefail
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          test -s app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
       - name: Android Connected E2E
         timeout-minutes: 25
         uses: ReactiveCircus/android-emulator-runner@v2
         with:
-          api-level: 34
+          api-level: 30
           arch: x86_64
           profile: pixel_2
           force-avd-creation: true
