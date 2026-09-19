@@ -27,6 +27,10 @@ function providerError(status, message, retryAfterMs = 0) {
 }
 
 const FREE_PROVIDER_DEFAULTS = ['kilo', 'horde', 'pollinations', 'animica', 'ollama'];
+const NONZERO_COST_PROVIDERS = new Set(['openai','anthropic','deepseek','xai','gemini','groq','openrouter','cloudflare','freeinference']);
+const ZERO_COST_MODE = String(process.env.AI_ZERO_COST_MODE || 'true').toLowerCase() !== 'false';
+const effectiveProviderOrder = (value) => parseList(value, FREE_PROVIDER_DEFAULTS.join(','))
+  .filter((id) => !ZERO_COST_MODE || !NONZERO_COST_PROVIDERS.has(id));
 const parseList = (value, fallback) => String(value || fallback).split(',').map((item) => item.trim()).filter(Boolean);
 const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024;
 
@@ -417,10 +421,82 @@ async function callOpenAiCompatible(url, key, model, messages, timeoutMs, parent
   }
 }
 
+
+async function callKiloStream(messages, timeoutMs, parentSignal, onDelta) {
+  const { signal, cleanup } = timeoutSignal(parentSignal, timeoutMs);
+  const model = process.env.KILO_MODEL || 'kilo-auto/free';
+  try {
+    const response = await fetch('https://api.kilo.ai/api/gateway/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: true,
+        stop: STOP_SEQUENCES,
+        max_tokens: Math.min(Number(process.env.KILO_MAX_TOKENS || 1200), 2048)
+      }),
+      signal
+    });
+    if (!response.ok) {
+      const json = await readJsonBounded(response);
+      throw responseError(response, json, 'Kilo streaming request failed');
+    }
+    if (!response.body?.getReader) throw providerError(502, 'Kilo streaming body unavailable');
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let text = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (!data) continue;
+        if (data === '[DONE]') return { text: sanitizeAssistantText(text), model };
+        let json;
+        try { json = JSON.parse(data); } catch { continue; }
+        const delta = json?.choices?.[0]?.delta?.content || '';
+        if (delta) {
+          text += delta;
+          await onDelta(delta);
+        }
+      }
+    }
+    const clean = sanitizeAssistantText(text);
+    if (!clean) throw providerError(502, 'Kilo streaming returned empty response');
+    return { text: clean, model };
+  } finally {
+    cleanup();
+  }
+}
+
+export async function streamWithFreePool({ messages, timeoutMs = 30000, signal, onDelta }) {
+  const order = [...new Set(effectiveProviderOrder(process.env.AI_PROVIDER_ORDER))];
+  if (!order.length) throw new ProviderPoolUnavailableError({}, providerHealth.snapshot([]));
+
+  if (order.includes('kilo') && !providerHealth.isCoolingDown('kilo')) {
+    try {
+      const result = await callKiloStream(messages, Math.min(providerTimeoutMs('kilo'), timeoutMs), signal, onDelta);
+      providerHealth.recordSuccess('kilo', { status: 200 });
+      return { ...result, provider: 'kilo' };
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      providerHealth.recordFailure('kilo', error);
+    }
+  }
+
+  const result = await generateWithFreePool({ messages, timeoutMs, signal });
+  await onDelta(result.text);
+  return result;
+}
+
 export async function generateWithFreePool({ messages, timeoutMs = 30000, signal }) {
-  const order = [...new Set(
-    parseList(process.env.AI_PROVIDER_ORDER, FREE_PROVIDER_DEFAULTS.join(','))
-  )];
+  const order = [...new Set(effectiveProviderOrder(process.env.AI_PROVIDER_ORDER))];
 
   return generateHedged({
     messages,
