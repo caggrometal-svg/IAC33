@@ -843,7 +843,7 @@ private suspend fun requestAiStudio(
 
     val response = postJson(backend.trimEnd('/') + endpoint, json.toString())
     if (response.status !in 200..299) error(response.body)
-    if (mode == "Vídeo" || mode == "Imagen→Vídeo" || mode == "Vídeo→Vídeo") {
+    if (mode.contains("Vídeo")) {
         val initial = JSONObject(response.body)
         val jobId = initial.getString("jobId")
         return@withContext pollMediaJob(backend, jobId)
