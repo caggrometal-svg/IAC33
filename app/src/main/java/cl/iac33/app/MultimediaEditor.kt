@@ -754,7 +754,7 @@ private fun AiStudio(
     onImportResult: (Uri) -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    val modes = listOf("Imagen", "Imagen→Imagen", "Vídeo", "Imagen→Vídeo", "Vídeo→Vídeo", "TTS")
+    val modes = listOf("Generador de imágenes IA", "Imagen→Imagen", "Generador de vídeos IA", "Imagen→Vídeo", "Vídeo→Vídeo", "TTS")
 
     Column(
         Modifier.fillMaxSize(),
@@ -813,9 +813,9 @@ private suspend fun requestAiStudio(
     backend: String
 ): String = withContext(Dispatchers.IO) {
     val endpoint = when (mode) {
-        "Imagen" -> "/v1/ai/text-to-image"
+        "Generador de imágenes IA" -> "/v1/ai/text-to-image"
         "Imagen→Imagen" -> "/v1/ai/image-to-image"
-        "Vídeo" -> "/v1/ai/text-to-video"
+        "Generador de vídeos IA" -> "/v1/ai/text-to-video"
         "Imagen→Vídeo" -> "/v1/ai/image-to-video"
         "Vídeo→Vídeo" -> "/v1/ai/video-to-video"
         "TTS" -> "/v1/ai/text-to-speech"
@@ -827,10 +827,10 @@ private suspend fun requestAiStudio(
             "TTS" -> put("text", prompt)
             else -> put("prompt", prompt)
         }
-        if (mode.contains("Imagen") && mode != "Imagen" && source != null) {
+        if (mode.contains("Imagen") && mode != "Generador de imágenes IA" && source != null) {
             put("image", uriAsDataUri(context, source))
         }
-        if (mode.contains("Vídeo")) {
+        if (mode.contains("Vídeo") || mode == "Generador de vídeos IA") {
             put("ratio", "1280:720")
             put("duration", 5)
         }
