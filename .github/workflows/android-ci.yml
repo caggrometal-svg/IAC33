@@ -42,7 +42,7 @@ jobs:
         working-directory: backend
         run: npm test
       - name: Unit tests and build
-        run: gradle testDebugUnitTest assembleDebug --parallel --build-cache --no-daemon --console=plain
+        run: gradle testDebugUnitTest assembleDebug assembleDebugAndroidTest --parallel --build-cache --no-daemon --console=plain
       - name: Enable KVM for Android emulator
         run: |
           sudo groupadd -f kvm
