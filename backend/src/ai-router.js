@@ -29,6 +29,7 @@ function providerError(status, message, retryAfterMs = 0) {
 
 const FREE_PROVIDER_DEFAULTS = ['gemini', 'groq', 'openrouter', 'deepseek', 'cloudflare', 'kilo', 'horde', 'pollinations', 'animica', 'ollama', 'andrew2'];
 const parseList = (value, fallback) => String(value || fallback).split(',').map((item) => item.trim()).filter(Boolean);
+const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 function sleep(ms, signal) {
   return new Promise((resolve, reject) => {
