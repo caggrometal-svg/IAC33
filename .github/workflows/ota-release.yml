@@ -2,11 +2,6 @@ name: IAC33 OTA Release
 # OTA delivery hardening: preserve actionable HTTP/auth diagnostics.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'app/**'
-      - '.github/workflows/ota-release.yml'
   workflow_dispatch:
 
 permissions:
