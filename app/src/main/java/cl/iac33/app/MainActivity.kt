@@ -1,7 +1,11 @@
 package cl.iac33.app
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.pm.PackageManager
+import android.widget.Toast
 import android.os.Bundle
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -54,6 +58,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -239,6 +245,7 @@ private fun AiPanel(
 ) {
     val engine = remember(settings.aiLocalFirst) { AiEngineImpl(settings.aiLocalFirst) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var draft by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var activeJob by remember { mutableStateOf<Job?>(null) }
@@ -440,12 +447,27 @@ private fun AiPanel(
                                     }
                                 }
                                 Spacer(Modifier.height(4.dp))
-                                Text(
-                                    text = AiTextSanitizer.sanitize(line.text),
-                                    color = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer
-                                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    style = MaterialTheme.typography.bodyLarge
-                                )
+                                SelectionContainer {
+                                    Text(
+                                        text = AiTextSanitizer.sanitize(line.text),
+                                        color = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer
+                                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.bodyLarge
+                                    )
+                                }
+                                if (!isUser) {
+                                    Spacer(Modifier.height(6.dp))
+                                    OutlinedButton(
+                                        onClick = {
+                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                            clipboard.setPrimaryClip(
+                                                ClipData.newPlainText("IAC33", AiTextSanitizer.sanitize(line.text))
+                                            )
+                                            Toast.makeText(context, "Texto copiado", Toast.LENGTH_SHORT).show()
+                                        },
+                                        modifier = Modifier.height(36.dp)
+                                    ) { Text("Copiar") }
+                                }
                             }
                         }
                     }
