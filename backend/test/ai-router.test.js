@@ -111,11 +111,10 @@ test('reports internal diagnostics when every explicitly selected provider fails
     router.generateWithFreePool({ messages, timeoutMs: 2000 }),
     (error) => {
       assert.equal(error.message, 'AI_PROVIDERS_UNAVAILABLE');
-      assert.equal(error.diagnostics.length, 2);
       assert.equal(error.trace.openrouter, 'OFFLINE');
       assert.equal(error.trace.groq, 'OFFLINE');
-      assert.equal(error.diagnostics[0].state, 'OFFLINE');
-      assert.equal(error.diagnostics[1].state, 'OFFLINE');
+      assert.equal(error.diagnostics.openrouter.state, 'OFFLINE');
+      assert.equal(error.diagnostics.groq.state, 'OFFLINE');
       return true;
     }
   );
