@@ -108,6 +108,7 @@ fun MultimediaPanel() {
     var mode by remember { mutableStateOf(StudioMode.EDITOR) }
     var source by remember { mutableStateOf<Uri?>(null) }
     var sourceKind by remember { mutableStateOf<StudioMediaKind?>(null) }
+    var joinSources by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var audioUri by remember { mutableStateOf<Uri?>(null) }
     var startMs by remember { mutableLongStateOf(0L) }
     var endMs by remember { mutableLongStateOf(Long.MAX_VALUE) }
@@ -145,6 +146,18 @@ fun MultimediaPanel() {
         startMs = 0L
         endMs = if (durationMs > 0L) durationMs else Long.MAX_VALUE
         status = "Medio cargado"
+    }
+
+    val joinPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.size < 2) {
+            if (uris.isNotEmpty()) status = "Selecciona al menos dos vídeos"
+            return@rememberLauncherForActivityResult
+        }
+        uris.forEach { uri ->
+            runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        }
+        joinSources = uris
+        status = uris.size.toString() + " vídeos preparados para unir"
     }
 
     val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -203,6 +216,8 @@ fun MultimediaPanel() {
                     exportProgress = exportProgress,
                     status = status,
                     onOpen = { mediaPicker.launch(arrayOf("image/*", "video/*")) },
+                    onJoin = { joinPicker.launch(arrayOf("video/*")) },
+                    joinCount = joinSources.size,
                     onAudio = { audioPicker.launch(arrayOf("audio/*")) },
                     onExtractAudio = {
                         val uri = source ?: return@EditorStudio
@@ -341,6 +356,8 @@ private fun EditorStudio(
     exportProgress: Int,
     status: String,
     onOpen: () -> Unit,
+    onJoin: () -> Unit,
+    joinCount: Int,
     onAudio: () -> Unit,
     onExtractAudio: () -> Unit,
     onStartMs: (Long) -> Unit,
@@ -392,7 +409,10 @@ private fun EditorStudio(
                 Text("Editor Profesional", style = MaterialTheme.typography.headlineSmall)
                 Text(status, style = MaterialTheme.typography.bodySmall)
             }
-            Button(onClick = onOpen) { Text("Importar") }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(onClick = onOpen) { Text("Importar") }
+                OutlinedButton(onClick = onJoin) { Text(if (joinCount >= 2) "Unir (" + joinCount + ")" else "Unir vídeos") }
+            }
         }
 
         Card(
