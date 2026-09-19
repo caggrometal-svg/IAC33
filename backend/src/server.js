@@ -278,7 +278,7 @@ const server = http.createServer(async (req, res) => {
     const path = new URL(req.url, 'http://localhost').pathname;
     if (req.method === 'GET' && path === '/health') return send(res, 200, { ok: true, service: 'iac33-backend', status: 'alive' });
     if (req.method === 'GET' && path === '/v1/ai/diagnostics') {
-      const order = String(process.env.AI_PROVIDER_ORDER || 'gemini,groq,openrouter,deepseek,cloudflare,kilo,horde,pollinations,animica,ollama,andrew2')
+      const order = String(process.env.AI_PROVIDER_ORDER || 'gemini,groq,openrouter,deepseek,cloudflare,kilo,horde,pollinations,animica,ollama,anthropic,xai,openai')
         .split(',').map((id) => id.trim()).filter(Boolean);
       return send(res, 200, buildAiDiagnostics(order));
     }
