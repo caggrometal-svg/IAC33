@@ -72,7 +72,9 @@ configure_verifier() {
 run_instrumented() {
   local class_name="$1"
   log "=== Running $class_name ==="
-  timeout 90s adb_cmd shell am instrument -w -r     -e class "$class_name"     cl.iac33.app.test/androidx.test.runner.AndroidJUnitRunner
+  timeout 90s adb -s "$ADB_DEVICE" shell am instrument -w -r \
+    -e class "$class_name" \
+    cl.iac33.app.test/androidx.test.runner.AndroidJUnitRunner
 }
 
 trap 'status=$?; if [[ $status -ne 0 ]]; then echo "=== Connected E2E diagnostics ==="; diagnostics; fi; exit $status' EXIT
@@ -92,14 +94,14 @@ test -s "$TARGET_APK"
 test -s "$TEST_APK"
 
 log "Installing target APK..."
-timeout 90s adb_cmd install -r -t "$TARGET_APK"
+timeout 90s adb -s "$ADB_DEVICE" install -r -t "$TARGET_APK"
 
 log "Installing instrumentation APK..."
-timeout 90s adb_cmd install -r -t "$TEST_APK"
+timeout 90s adb -s "$ADB_DEVICE" install -r -t "$TEST_APK"
 
-# Do not clear app data here: DeviceIdentity intentionally couples the Android
-# Keystore key with local identity metadata. Clearing only application data can
-# invalidate that pairing and create a false E2E failure.
+# Do not clear app data here: DeviceIdentity couples the Android Keystore key
+# with local identity metadata. A data-only clear can invalidate that pairing
+# and turn an otherwise valid E2E into a false failure.
 run_instrumented "cl.iac33.app.MainActivitySmokeTest"
 run_instrumented "cl.iac33.app.control.DeviceControlE2ETest"
 
