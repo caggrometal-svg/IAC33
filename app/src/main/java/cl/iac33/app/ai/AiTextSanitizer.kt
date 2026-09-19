@@ -21,7 +21,7 @@ object AiTextSanitizer {
             .filterNot { line ->
                 val normalized = line.trim()
                 normalized.matches(Regex("(?i)^(system|user|assistant|developer|tool)\\s*:.*")) ||
-                    normalized.matches(Regex("(?i)^(provider\\s*(·|:)|http\\s+[45]\\d\\d|ai_providers_unavailable|modo\\s+local\\s+activo|respaldo\\s+local\\s+activado)\\b.*"))
+                    normalized.matches(Regex("(?i)^(provider\\s*(·|:)|http\\s+[45]\\d\\d|ai_providers_unavailable|modo\\s+local\\s+activo|respaldo\\s+local\\s+activado).*"))
             }
             .joinToString("\n")
             .replace(Regex("\n{3,}"), "\n\n")
