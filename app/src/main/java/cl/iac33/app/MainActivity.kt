@@ -595,8 +595,8 @@ private fun RedPanel(connectivityStatus: ConnectivityStatus) {
                         busy = true
                         scope.launch(Dispatchers.IO) {
                             val results = listOf(
-                                "Backend" to BuildConfig.IAC33_BACKEND_URL.trimEnd('/') + "/health",
-                                "IA router" to BuildConfig.IAC33_BACKEND_URL.trimEnd('/') + "/v1/ai/status",
+                                "Backend" to BuildConfig.IAC33_BACKEND_URL.trimEnd('/') + "/ready",
+                                "IA router" to BuildConfig.IAC33_BACKEND_URL.trimEnd('/') + "/v1/ai/diagnostics",
                                 "Mapas OSM" to "https://tile.openstreetmap.org/5/10/12.png",
                                 "USGS" to "https://earthquake.usgs.gov/"
                             ).map { (label, url) ->

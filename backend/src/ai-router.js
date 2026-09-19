@@ -467,10 +467,15 @@ function liveHealthUrl(id) {
   if (id === 'ollama') {
     const endpoint = String(process.env.IAC33_OLLAMA_ENDPOINT || '').trim().replace(/\/$/, '');
     if (!endpoint) return null;
-    const parsed = new URL(endpoint);
-    return parsed.pathname.endsWith('/v1/chat/completions')
-      ? parsed.origin + parsed.pathname.replace('/v1/chat/completions', '/api/tags')
-      : endpoint + '/api/tags';
+    try {
+      const parsed = new URL(endpoint);
+      if (parsed.protocol !== 'https:') return null;
+      return parsed.pathname.endsWith('/v1/chat/completions')
+        ? parsed.origin + parsed.pathname.replace('/v1/chat/completions', '/api/tags')
+        : endpoint + '/api/tags';
+    } catch {
+      return null;
+    }
   }
   if (id === 'cloudflare') {
     const account = String(process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
