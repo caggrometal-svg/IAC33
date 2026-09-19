@@ -78,6 +78,7 @@ import cl.iac33.app.multimedia.ExportRequest
 import cl.iac33.app.multimedia.MediaExportEngine
 import cl.iac33.app.multimedia.MediaFilter
 import cl.iac33.app.multimedia.TextOverlaySpec
+import cl.iac33.app.multimedia.TimelineExportClip
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -99,6 +100,14 @@ private data class TimelineLayer(
     val uri: Uri? = null
 )
 
+private data class TimelineClipState(
+    val id: String,
+    val uri: Uri,
+    val name: String,
+    val startMs: Long = 0L,
+    val endMs: Long? = null
+)
+
 @OptIn(UnstableApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun MultimediaPanel() {
@@ -110,6 +119,9 @@ fun MultimediaPanel() {
     var source by remember { mutableStateOf<Uri?>(null) }
     var sourceKind by remember { mutableStateOf<StudioMediaKind?>(null) }
     var joinSources by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    var timelineClips by remember { mutableStateOf<List<TimelineClipState>>(emptyList()) }
+    var selectedClipIndex by remember { mutableIntStateOf(0) }
+    var playheadMs by remember { mutableLongStateOf(0L) }
     var audioUri by remember { mutableStateOf<Uri?>(null) }
     var startMs by remember { mutableLongStateOf(0L) }
     var endMs by remember { mutableLongStateOf(Long.MAX_VALUE) }
@@ -142,6 +154,22 @@ fun MultimediaPanel() {
         runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
         source = uri
         val mime = context.contentResolver.getType(uri).orEmpty()
+        if (mime.startsWith("video/")) {
+            val clipDuration = readDurationMs(context, uri)
+            timelineClips = listOf(
+                TimelineClipState(
+                    id = java.util.UUID.randomUUID().toString(),
+                    uri = uri,
+                    name = "Clip 1",
+                    startMs = 0L,
+                    endMs = clipDuration.takeIf { it > 0L }
+                )
+            )
+            selectedClipIndex = 0
+        } else {
+            timelineClips = emptyList()
+            selectedClipIndex = 0
+        }
         sourceKind = if (mime.startsWith("image/")) StudioMediaKind.IMAGE else StudioMediaKind.VIDEO
         durationMs = if (sourceKind == StudioMediaKind.VIDEO) readDurationMs(context, uri) else 0L
         startMs = 0L
@@ -157,8 +185,28 @@ fun MultimediaPanel() {
         uris.forEach { uri ->
             runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
         }
-        joinSources = uris
-        status = uris.size.toString() + " vídeos preparados para unir"
+        val incoming = uris.mapIndexed { index, item ->
+            TimelineClipState(
+                id = java.util.UUID.randomUUID().toString(),
+                uri = item,
+                name = "Clip " + (timelineClips.size + index + 1),
+                startMs = 0L,
+                endMs = readDurationMs(context, item).takeIf { it > 0L }
+            )
+        }
+        timelineClips = (timelineClips + incoming).take(32)
+        if (timelineClips.isNotEmpty()) {
+            selectedClipIndex = (timelineClips.size - incoming.size).coerceAtLeast(0)
+            val selected = timelineClips[selectedClipIndex]
+            source = selected.uri
+            sourceKind = StudioMediaKind.VIDEO
+            durationMs = readDurationMs(context, selected.uri)
+            startMs = selected.startMs
+            endMs = selected.endMs ?: durationMs
+            playheadMs = startMs
+        }
+        joinSources = timelineClips.map { it.uri }
+        status = timelineClips.size.toString() + " clips en la línea de tiempo"
     }
 
     val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
