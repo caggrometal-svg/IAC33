@@ -55,7 +55,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -857,7 +856,7 @@ private fun runConnectivityDiagnostic(baseUrl: String, deviceConnectivity: Strin
     val cleanBase = baseUrl.trimEnd('/')
     val health = httpJsonRequest(cleanBase + "/health", "GET", null)
     if (health.first !in 200..299) {
-        return "DISPOSITIVO: $deviceConnectivity\nANDROID→BACKEND: ERROR · HTTP \${health.first}\n\${health.second.take(500)}"
+        return "DISPOSITIVO: $deviceConnectivity\nANDROID→BACKEND: ERROR · HTTP ${health.first}\n${health.second.take(500)}"
     }
 
     val messages = org.json.JSONArray().apply {
