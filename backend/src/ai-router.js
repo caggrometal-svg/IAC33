@@ -4,7 +4,6 @@ import { generateSequential } from './ai/router.ts';
 
 const providers = {
   openai: { key: 'OPENAI_API_KEY', async call(messages, timeoutMs, _attempt, signal) { return callOpenAiCompatible('https://api.openai.com/v1/chat/completions', process.env.OPENAI_API_KEY, process.env.OPENAI_MODEL || 'gpt-4o-mini', messages, timeoutMs, signal); } },
-  andrew2: { key: null, async call(messages, timeoutMs, _attempt, signal) { return callAndrew2(messages, timeoutMs, signal); } },
   ollama: { key: 'IAC33_OLLAMA_API_KEY', async call(messages, timeoutMs, _attempt, signal) { return callOllama(messages, timeoutMs, signal); } },
   anthropic: { key: 'ANTHROPIC_API_KEY', async call(messages, timeoutMs, _attempt, signal) { return callAnthropic(messages, timeoutMs, signal); } },
   deepseek: { key: 'DEEPSEEK_API_KEY', async call(messages, timeoutMs, _attempt, signal) { return callOpenAiCompatible('https://api.deepseek.com/chat/completions', process.env.DEEPSEEK_API_KEY, process.env.DEEPSEEK_MODEL || 'deepseek-chat', messages, timeoutMs, signal); } },
@@ -27,7 +26,7 @@ function providerError(status, message, retryAfterMs = 0) {
   return error;
 }
 
-const FREE_PROVIDER_DEFAULTS = ['gemini', 'groq', 'openrouter', 'deepseek', 'cloudflare', 'kilo', 'horde', 'pollinations', 'animica', 'ollama', 'andrew2'];
+const FREE_PROVIDER_DEFAULTS = ['gemini', 'groq', 'openrouter', 'deepseek', 'cloudflare', 'kilo', 'horde', 'pollinations', 'animica', 'ollama'];
 const parseList = (value, fallback) => String(value || fallback).split(',').map((item) => item.trim()).filter(Boolean);
 const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024;
 
@@ -193,33 +192,7 @@ async function callCloudflare(messages, timeoutMs, account, model, parentSignal)
   }
 }
 
-async function callAndrew2(messages, timeoutMs, parentSignal) {
-  const { signal, cleanup } = timeoutSignal(parentSignal, timeoutMs);
-  try {
-    const base = String(process.env.IAC33_ANDREW2_API_URL || 'https://andrew2-api.onrender.com').trim().replace(/\/$/, '');
-    const parsed = new URL(base);
-    if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== 'andrew2-api.onrender.com') {
-      throw providerError(503, 'Andrew2 endpoint not trusted');
-    }
-    const headers = { 'content-type': 'application/json', 'x-iac33-bridge': 'IAC33/Andrew2' };
-    if (process.env.IAC33_ANDREW2_API_KEY) headers.authorization = 'Bearer ' + process.env.IAC33_ANDREW2_API_KEY;
-    const response = await fetch(parsed.origin + '/v1/ai/generate', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ messages }),
-      signal
-    });
-    const json = await readJsonBounded(response);
-    if (!response.ok) throw responseError(response, json, 'Andrew2 request failed');
-    const text = sanitizeAssistantText(json?.text || json?.choices?.[0]?.message?.content || json?.response || '');
-    if (!text) throw providerError(502, 'Andrew2 returned empty response');
-    return { text, model: json?.model || 'andrew2' };
-  } finally {
-    cleanup();
-  }
-}
-
-async function callAnthropic(messages, timeoutMs, parentSignal) {
+async async function callAnthropic(messages, timeoutMs, parentSignal) {
   const { signal, cleanup } = timeoutSignal(parentSignal, timeoutMs);
   try {
     const system = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\\n');
