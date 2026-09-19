@@ -1,0 +1,102 @@
+export class ProviderPoolUnavailableError extends Error {
+  trace;
+  diagnostics;
+
+  constructor(trace, diagnostics) {
+    super('AI_PROVIDERS_UNAVAILABLE');
+    this.name = 'ProviderPoolUnavailableError';
+    this.trace = trace;
+    this.diagnostics = diagnostics;
+  }
+}
+
+function boundedMs(value, fallback, min, max) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.min(Math.max(parsed, min), max) : fallback;
+}
+
+function abortError() {
+  const error = new Error('ABORTED');
+  error.name = 'AbortError';
+  return error;
+}
+
+export async function generateSequential({
+  messages,
+  timeoutMs = 30000,
+  signal,
+  order,
+  providers,
+  health,
+  providerTimeoutMs,
+  configured = (provider) => !provider.key || Boolean(process.env[provider.key])
+}) {
+  const totalBudgetMs = boundedMs(
+    process.env.AI_TOTAL_TIMEOUT_MS,
+    30000,
+    5000,
+    30000
+  );
+  const budgetMs = Math.min(boundedMs(timeoutMs, 30000, 1000, 45000), totalBudgetMs);
+  const deadline = Date.now() + budgetMs;
+  const trace = {};
+
+  for (const id of order) {
+    if (signal?.aborted) throw abortError();
+
+    const provider = providers[id];
+    if (!provider) {
+      trace[id] = 'OFFLINE';
+      continue;
+    }
+
+    if (health.isCoolingDown(id)) {
+      trace[id] = health.get(id).state;
+      continue;
+    }
+
+    if (!configured(provider)) {
+      trace[id] = 'OFFLINE';
+      continue;
+    }
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      trace[id] = 'TIMEOUT';
+      break;
+    }
+
+    const attemptTimeoutMs = Math.min(
+      providerTimeoutMs(id),
+      budgetMs,
+      remainingMs
+    );
+
+    try {
+      const result = await provider.call(messages, attemptTimeoutMs, 1, signal);
+      if (!result || typeof result.text !== 'string' || !result.text.trim()) {
+        const empty = new Error('Provider returned empty response');
+        empty.status = 502;
+        throw empty;
+      }
+
+      health.recordSuccess(id, { status: 200 });
+      trace[id] = 'ONLINE';
+      return {
+        ...result,
+        provider: id,
+        trace
+      };
+    } catch (error) {
+      if (signal?.aborted) throw error;
+
+      const healthRecord = health.recordFailure(id, error);
+      trace[id] = healthRecord.state;
+    }
+  }
+
+  throw new ProviderPoolUnavailableError(
+    trace,
+    health.snapshot(order)
+  );
+}

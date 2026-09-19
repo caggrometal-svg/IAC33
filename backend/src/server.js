@@ -3,6 +3,8 @@ import crypto from 'node:crypto';
 import { Pool } from 'pg';
 import { allowedTransitions, validCommand } from './command-core.js';
 import { generateWithFreePool } from './ai-router.js';
+import { providerHealth } from './ai/provider-health.ts';
+import { buildAiDiagnostics } from './routes/diagnostics.ts';
 import { sanitizeAssistantText, classifyIntent } from './ai-output.js';
 import { validateGptCommand, commandDigest } from './gpt-command-bridge.js';
 import { verifyGitHubActionsToken } from './github-oidc.js';
@@ -275,6 +277,11 @@ const server = http.createServer(async (req, res) => {
   try {
     const path = new URL(req.url, 'http://localhost').pathname;
     if (req.method === 'GET' && path === '/health') return send(res, 200, { ok: true, service: 'iac33-backend', status: 'alive' });
+    if (req.method === 'GET' && path === '/v1/ai/diagnostics') {
+      const order = String(process.env.AI_PROVIDER_ORDER || 'gemini,groq,openrouter,deepseek,cloudflare,kilo,horde,pollinations,animica,ollama,andrew2')
+        .split(',').map((id) => id.trim()).filter(Boolean);
+      return send(res, 200, buildAiDiagnostics(order));
+    }
     if (req.method === 'GET' && path === '/v1/ai/status') {
       const order = String(process.env.AI_PROVIDER_ORDER || 'gemini,groq,openrouter,deepseek,cloudflare,kilo,horde,pollinations,animica,ollama,andrew2')
         .split(',').map((id) => id.trim()).filter(Boolean);
@@ -287,7 +294,8 @@ const server = http.createServer(async (req, res) => {
         service: 'iac33-ai',
         router: 'free-pool',
         webContext: String(process.env.AI_WEB_CONTEXT || 'true').toLowerCase() !== 'false',
-        providers: configured
+        providers: configured,
+        health: providerHealth.snapshot(order)
       });
     }
     if (req.method === 'GET' && path === '/v1/seismic/latest') {
@@ -349,7 +357,7 @@ const server = http.createServer(async (req, res) => {
         } catch (error) {
           if (error?.name === 'AbortError' || controller.signal.aborted) throw error;
           console.error('IAC33 AI pool exhausted', error?.message || 'AI_PROVIDERS_UNAVAILABLE');
-          return send(res, 503, { ok: false, error: 'AI_PROVIDERS_UNAVAILABLE' });
+          return send(res, 503, { ok: false, error: 'AI_PROVIDERS_UNAVAILABLE', trace: error?.trace || {} });
         }
       } finally {
         req.off('aborted', abortRequest);

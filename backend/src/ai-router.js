@@ -1,4 +1,6 @@
 import { STOP_SEQUENCES, sanitizeAssistantText } from './ai-output.js';
+import { providerHealth } from './ai/provider-health.ts';
+import { generateSequential } from './ai/router.ts';
 
 const providers = {
   openai: { key: 'OPENAI_API_KEY', async call(messages, timeoutMs, _attempt, signal) { return callOpenAiCompatible('https://api.openai.com/v1/chat/completions', process.env.OPENAI_API_KEY, process.env.OPENAI_MODEL || 'gpt-4o-mini', messages, timeoutMs, signal); } },
@@ -25,30 +27,8 @@ function providerError(status, message, retryAfterMs = 0) {
   return error;
 }
 
-const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const FREE_PROVIDER_DEFAULTS = ['gemini', 'groq', 'openrouter', 'deepseek', 'cloudflare', 'kilo', 'horde', 'pollinations', 'animica', 'ollama', 'andrew2'];
-const SERIAL_PREFERRED_PROVIDERS = new Set(['ollama']);
-const MAX_PARALLEL_PROVIDERS = 3;
-const PROVIDER_CIRCUIT_FAILURES = Math.min(Math.max(Number(process.env.AI_CIRCUIT_FAILURES || 2), 1), 5);
-const PROVIDER_CIRCUIT_OPEN_MS = Math.min(Math.max(Number(process.env.AI_CIRCUIT_OPEN_MS || 30000), 5000), 300000);
-const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024;
-const providerHealth = new Map();
-
-const parseList = (value, fallback) =>
-  String(value || fallback).split(',').map((item) => item.trim()).filter(Boolean);
-
-function isRetryable(error) {
-  if (!error) return false;
-  if (error?.name === 'AbortError') return false;
-  if (RETRYABLE_STATUSES.has(Number(error?.status))) return true;
-  if (error?.name === 'TypeError') return true;
-  return ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN'].includes(error?.code);
-}
-
-function retryAfterMs(error) {
-  const value = Number(error?.retryAfterMs || 0);
-  return Number.isFinite(value) && value > 0 ? Math.min(value, 1500) : 0;
-}
+const parseList = (value, fallback) => String(value || fallback).split(',').map((item) => item.trim()).filter(Boolean);
 
 function sleep(ms, signal) {
   return new Promise((resolve, reject) => {
@@ -470,169 +450,18 @@ async function callOpenAiCompatible(url, key, model, messages, timeoutMs, parent
   }
 }
 
-function circuitOpen(id) {
-  const state = providerHealth.get(id);
-  if (!state) return false;
-  if (state.openUntil > Date.now()) return true;
-  providerHealth.delete(id);
-  return false;
-}
-
-function recordSuccess(id) {
-  providerHealth.delete(id);
-}
-
-function recordFailure(id, error) {
-  if (!isRetryable(error)) return;
-  const current = providerHealth.get(id) || { failures: 0, openUntil: 0 };
-  current.failures += 1;
-  if (current.failures >= PROVIDER_CIRCUIT_FAILURES) {
-    current.openUntil = Date.now() + PROVIDER_CIRCUIT_OPEN_MS;
-  }
-  providerHealth.set(id, current);
-}
-
-export async function generateWithFreePool({ messages, timeoutMs = 18000, signal }) {
+export async function generateWithFreePool({ messages, timeoutMs = 30000, signal }) {
   const order = [...new Set(
     parseList(process.env.AI_PROVIDER_ORDER, FREE_PROVIDER_DEFAULTS.join(','))
   )];
-  const diagnostics = [];
-  const totalBudgetMs = Math.min(
-    Math.max(Number(process.env.AI_TOTAL_TIMEOUT_MS || 20000), 5000),
-    30000
-  );
-  const budgetMs = Math.min(timeoutMs, totalBudgetMs);
-  const deadline = Date.now() + budgetMs;
-  const masterController = new AbortController();
-  const onAbort = () => masterController.abort(signal.reason);
-  if (signal) {
-    if (signal.aborted) masterController.abort(signal.reason);
-    else signal.addEventListener('abort', onAbort, { once: true });
-  }
-  const budgetTimer = setTimeout(() => masterController.abort(), budgetMs);
 
-  try {
-    const available = order.filter((id) => {
-      const provider = providers[id];
-      if (!provider) {
-        diagnostics.push({ provider: id, state: 'UNKNOWN_PROVIDER' });
-        return false;
-      }
-      if (circuitOpen(id)) {
-        diagnostics.push({ provider: id, state: 'CIRCUIT_OPEN' });
-        return false;
-      }
-      if (provider.key && !process.env[provider.key]) {
-        diagnostics.push({ provider: id, state: 'NOT_CONFIGURED' });
-        return false;
-      }
-      return true;
-    });
-
-    if (!available.length) {
-      const error = new Error('AI_PROVIDERS_UNAVAILABLE');
-      error.diagnostics = diagnostics;
-      throw error;
-    }
-
-    async function attemptProvider(id) {
-      const provider = providers[id];
-      const maxAttempts = Math.min(
-        Math.max(Number(process.env.AI_PROVIDER_RETRIES || 1), 1),
-        3
-      );
-      let lastError = null;
-
-      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-        if (masterController.signal.aborted) {
-          const error = new Error('ABORTED');
-          error.name = 'AbortError';
-          throw error;
-        }
-        const remainingMs = deadline - Date.now();
-        if (remainingMs <= 0) break;
-        const attemptTimeoutMs = Math.min(
-          providerTimeoutMs(id),
-          timeoutMs,
-          remainingMs
-        );
-
-        try {
-          const result = await provider.call(
-            messages,
-            attemptTimeoutMs,
-            attempt,
-            masterController.signal
-          );
-          recordSuccess(id);
-          return result;
-        } catch (error) {
-          if (masterController.signal.aborted) throw error;
-          lastError = error;
-          if (attempt >= maxAttempts || !isRetryable(error)) break;
-          const remainingAfterFailure = deadline - Date.now();
-          if (remainingAfterFailure <= 50) break;
-          await sleep(
-            boundedRetryDelay(error, attempt, remainingAfterFailure),
-            masterController.signal
-          );
-        }
-      }
-
-      recordFailure(id, lastError);
-      throw lastError || providerError(504, 'Provider timeout');
-    }
-
-    for (let offset = 0; offset < available.length;) {
-      const first = available[offset];
-      const batchSize = SERIAL_PREFERRED_PROVIDERS.has(first) ? 1 : Math.min(MAX_PARALLEL_PROVIDERS, available.length - offset);
-      const batch = available.slice(offset, offset + batchSize);
-      const pending = batch.map((id) => {
-        const started = Date.now();
-        const promise = attemptProvider(id)
-          .then((result) => ({ ok: true, id, result, latencyMs: Date.now() - started }))
-          .catch((error) => ({ ok: false, id, error, latencyMs: Date.now() - started }));
-        return { id, promise };
-      });
-
-      while (pending.length) {
-        if (masterController.signal.aborted) {
-          const error = new Error('ABORTED');
-          error.name = 'AbortError';
-          throw error;
-        }
-        const settled = await Promise.race(pending.map((entry) => entry.promise));
-        const index = pending.findIndex((entry) => entry.id === settled.id);
-        if (index >= 0) pending.splice(index, 1);
-
-        diagnostics.push({
-          provider: settled.id,
-          state: settled.ok ? 'RESPONDING' :
-            settled.error?.status === 429 ? 'RATE_LIMITED' :
-            settled.error?.name === 'AbortError' ? 'TIMEOUT' : 'FAILED',
-          status: settled.ok ? 200 : (settled.error?.status || 500),
-          latencyMs: settled.latencyMs
-        });
-
-        if (settled.ok) {
-          const sanitized = sanitizeAssistantText(settled.result?.text);
-          if (!sanitized) {
-            recordFailure(settled.id, providerError(502, 'Provider returned empty sanitized response'));
-            continue;
-          }
-          masterController.abort();
-          return { ...settled.result, text: sanitized, provider: settled.id };
-        }
-      }
-      offset += batchSize;
-    }
-
-    const error = new Error('AI_PROVIDERS_UNAVAILABLE');
-    error.diagnostics = diagnostics;
-    throw error;
-  } finally {
-    clearTimeout(budgetTimer);
-    if (signal) signal.removeEventListener('abort', onAbort);
-    masterController.abort();
-  }
+  return generateSequential({
+    messages,
+    timeoutMs,
+    signal,
+    order,
+    providers,
+    health: providerHealth,
+    providerTimeoutMs
+  });
 }
