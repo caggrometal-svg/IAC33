@@ -48,65 +48,7 @@ jobs:
           disk-size: 8192M
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -no-metrics
           disable-animations: true
-          script: |
-            set -eu
-
-            wait_for_android() {
-              timeout 90s adb wait-for-device
-              timeout 5m sh -c 'until adb shell getprop sys.boot_completed | grep -m 1 "1"; do sleep 2; done'
-            }
-
-            wait_for_android
-
-            adb kill-server || true
-            adb start-server
-            adb reconnect offline || true
-            sleep 3
-            wait_for_android
-
-            adb shell settings put global verifier_verify_adb_installs 0 || true
-            adb shell settings put global package_verifier_enable 0 || true
-            adb shell settings put global package_verifier_user_consent 1 || true
-            adb shell settings put global verifier_timeout 120000 || true
-            adb shell settings put global streaming_verifier_timeout 120000 || true
-            adb shell settings put global app_integrity_verification_timeout 120000 || true
-
-            adb shell getprop ro.build.version.sdk
-            adb devices
-            adb shell settings get global verifier_verify_adb_installs || true
-            adb shell settings get global package_verifier_enable || true
-
-            run_connected_tests() {
-              timeout 10m gradle connectedDebugAndroidTest --no-daemon --stacktrace --console=plain
-            }
-
-            set +e
-            run_connected_tests > /tmp/iac33-connected-e2e.log 2>&1
-            status=$?
-            set -e
-            cat /tmp/iac33-connected-e2e.log
-
-            if [ "$status" -eq 0 ]; then
-              exit 0
-            fi
-
-            if grep -Eq 'INSTALL_FAILED_VERIFICATION_FAILURE|adb protocol fault|Failed to install split APK|Integrity verification timed out' /tmp/iac33-connected-e2e.log; then
-              echo "Transient emulator/package-install failure detected; refreshing ADB and retrying once."
-              adb kill-server || true
-              adb start-server
-              sleep 3
-              wait_for_android
-              adb shell settings put global verifier_verify_adb_installs 0 || true
-              adb shell settings put global package_verifier_enable 0 || true
-              adb shell settings put global package_verifier_user_consent 1 || true
-              adb shell settings put global verifier_timeout 120000 || true
-              adb shell settings put global streaming_verifier_timeout 120000 || true
-              adb shell settings put global app_integrity_verification_timeout 120000 || true
-              run_connected_tests
-              exit $?
-            fi
-
-            exit "$status"
+          script: bash scripts/android-connected-e2e.sh
 
       - name: Upload debug APK
         if: always()
