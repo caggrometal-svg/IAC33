@@ -11,8 +11,8 @@ const STARTUP_DB_BACKOFF_MS = 500;
 
 const startupPool = databaseUrl
   ? new Pool({
-      connectionString: databaseUrl,
-      ...(databaseNeedsSsl ? { ssl: { rejectUnauthorized: false } } : {}),
+      connectionString: normalizeDatabaseUrl(databaseUrl),
+      
       connectionTimeoutMillis: STARTUP_DB_TIMEOUT_MS,
       idleTimeoutMillis: 10_000,
       max: 1
