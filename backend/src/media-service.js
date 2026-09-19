@@ -3,13 +3,17 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-const ROOT = path.join(os.tmpdir(), 'iac33-media');
+const ROOT = path.resolve(process.env.IAC33_MEDIA_ROOT || path.join(os.tmpdir(), 'iac33-media'));
 const MAX_ASSET_BYTES = 25 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 const MAX_VIDEO_SECONDS = 10;
 const ASSET_TTL_MS = 6 * 60 * 60 * 1000;
 const jobs = new Map();
 const assets = new Map();
+const mediaWorkers = new Map();
+const MEDIA_MAX_ACTIVE_OR_QUEUED = Math.min(Math.max(Number(process.env.IAC33_MEDIA_MAX_JOBS || 3), 1), 6);
+const MEDIA_MAX_RUNNING = 1;
+let mediaRunning = 0;
 
 const IMAGE_PROVIDERS = String(process.env.IAC33_IMAGE_PROVIDERS || 'openai,stability')
   .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
@@ -106,6 +110,54 @@ async function saveAsset(buffer, mimeType, extension) {
 
 function assetUrl(id) {
   return '/v1/ai/media/assets/' + encodeURIComponent(id);
+}
+
+function cleanupExpiredMediaJobs(now = Date.now()) {
+  for (const [id, job] of jobs) {
+    if (now - job.updatedAt > ASSET_TTL_MS) {
+      jobs.delete(id);
+      mediaWorkers.delete(id);
+    }
+  }
+}
+
+function scheduleMediaJobs() {
+  cleanupExpiredMediaJobs();
+  while (mediaRunning < MEDIA_MAX_RUNNING) {
+    const next = [...jobs.values()].find((job) => job.status === 'QUEUED' && mediaWorkers.has(job.id));
+    if (!next) break;
+    const worker = mediaWorkers.get(next.id);
+    mediaRunning += 1;
+    next.status = 'RUNNING';
+    next.updatedAt = Date.now();
+
+    Promise.resolve()
+      .then(worker)
+      .catch((error) => {
+        next.status = 'FAILED';
+        next.updatedAt = Date.now();
+        console.error('IAC33 media job failed:', error?.code || 'MEDIA_JOB_ERROR');
+      })
+      .finally(() => {
+        mediaWorkers.delete(next.id);
+        mediaRunning = Math.max(0, mediaRunning - 1);
+        scheduleMediaJobs();
+      });
+  }
+}
+
+function enqueueMediaJob(job, worker) {
+  cleanupExpiredMediaJobs();
+  const activeOrQueued = [...jobs.values()].filter((item) =>
+    item.status === 'QUEUED' || item.status === 'RUNNING'
+  ).length;
+  if (activeOrQueued >= MEDIA_MAX_ACTIVE_OR_QUEUED) {
+    throw providerError(503, 'Multimedia queue is busy', 'MEDIA_QUEUE_BUSY');
+  }
+  jobs.set(job.id, job);
+  mediaWorkers.set(job.id, worker);
+  scheduleMediaJobs();
+  return job;
 }
 
 function jobPublic(job) {
@@ -302,35 +354,28 @@ async function generateVideoToVideoJob(prompt, videoData, ratio, duration) {
   const id = crypto.randomUUID();
   const now = Date.now();
   const job = { id, kind: 'VIDEO_TO_VIDEO', status: 'QUEUED', provider: null, createdAt: now, updatedAt: now, assetId: null };
-  jobs.set(id, job);
-  queueMicrotask(async () => {
-    try {
-      job.status = 'RUNNING';
-      job.updatedAt = Date.now();
-      let lastError = null;
-      const providers = String(process.env.IAC33_VIDEO_TO_VIDEO_PROVIDERS || '').split(',').map(v => v.trim().toLowerCase()).filter(Boolean);
-      for (const provider of providers) {
-        try {
-          const submit = await genericVideoToVideoSubmit(provider, prompt, videoData, ratio, duration);
-          job.provider = provider;
-          const asset = await pollAndDownloadVideoToVideo(job, submit);
-          job.assetId = asset.id;
-          job.status = 'SUCCEEDED';
-          job.updatedAt = Date.now();
-          return;
-        } catch (error) {
-          lastError = error;
-          if (error?.code === 'MEDIA_PROVIDER_UNCONFIGURED') continue;
-        }
+  return enqueueMediaJob(job, async () => {
+    let lastError = null;
+    const providers = String(process.env.IAC33_VIDEO_TO_VIDEO_PROVIDERS || '')
+      .split(',').map(v => v.trim().toLowerCase()).filter(Boolean);
+    for (const provider of providers) {
+      try {
+        const submit = await genericVideoToVideoSubmit(provider, prompt, videoData, ratio, duration);
+        job.provider = provider;
+        const asset = await pollAndDownloadVideoToVideo(job, submit);
+        job.assetId = asset.id;
+        job.status = 'SUCCEEDED';
+        job.updatedAt = Date.now();
+        return;
+      } catch (error) {
+        lastError = error;
+        if (error?.code === 'MEDIA_PROVIDER_UNCONFIGURED') continue;
       }
-      throw lastError || providerError(503, 'No video-to-video provider available', 'MEDIA_PROVIDERS_UNAVAILABLE');
-    } catch (error) {
-      job.status = 'FAILED';
-      job.updatedAt = Date.now();
-      console.error('IAC33 video-to-video job failed:', error?.code || 'MEDIA_JOB_ERROR');
     }
+    job.status = 'FAILED';
+    job.updatedAt = Date.now();
+    throw lastError || providerError(503, 'No video-to-video provider available', 'MEDIA_PROVIDERS_UNAVAILABLE');
   });
-  return job;
 }
 
 async function genericVideoSubmit(provider, prompt, imageData, ratio, duration) {
@@ -405,36 +450,28 @@ async function generateVideoJob(kind, prompt, imageData, ratio, duration) {
   const id = crypto.randomUUID();
   const now = Date.now();
   const job = { id, kind, status: 'QUEUED', provider: null, createdAt: now, updatedAt: now, assetId: null };
-  jobs.set(id, job);
-  queueMicrotask(async () => {
-    try {
-      job.status = 'RUNNING';
-      job.updatedAt = Date.now();
-      let lastError = null;
-      for (const provider of VIDEO_PROVIDERS) {
-        try {
-          const submit = provider === 'runway'
-            ? await runwaySubmit(prompt, imageData, ratio, duration)
-            : await genericVideoSubmit(provider, prompt, imageData, ratio, duration);
-          job.provider = submit.provider;
-          const asset = await pollAndDownloadVideo(job, submit);
-          job.assetId = asset.id;
-          job.status = 'SUCCEEDED';
-          job.updatedAt = Date.now();
-          return;
-        } catch (error) {
-          lastError = error;
-          if (error?.code === 'MEDIA_PROVIDER_UNCONFIGURED') continue;
-        }
+  return enqueueMediaJob(job, async () => {
+    let lastError = null;
+    for (const provider of VIDEO_PROVIDERS) {
+      try {
+        const submit = provider === 'runway'
+          ? await runwaySubmit(prompt, imageData, ratio, duration)
+          : await genericVideoSubmit(provider, prompt, imageData, ratio, duration);
+        job.provider = submit.provider;
+        const asset = await pollAndDownloadVideo(job, submit);
+        job.assetId = asset.id;
+        job.status = 'SUCCEEDED';
+        job.updatedAt = Date.now();
+        return;
+      } catch (error) {
+        lastError = error;
+        if (error?.code === 'MEDIA_PROVIDER_UNCONFIGURED') continue;
       }
-      throw lastError || providerError(503, 'No video provider available', 'MEDIA_PROVIDERS_UNAVAILABLE');
-    } catch (error) {
-      job.status = 'FAILED';
-      job.updatedAt = Date.now();
-      console.error('IAC33 media job failed:', error?.code || 'MEDIA_JOB_ERROR');
     }
+    job.status = 'FAILED';
+    job.updatedAt = Date.now();
+    throw lastError || providerError(503, 'No video provider available', 'MEDIA_PROVIDERS_UNAVAILABLE');
   });
-  return job;
 }
 
 async function openAiSpeech(text, voice = 'alloy') {
@@ -555,9 +592,7 @@ export async function readAsset(id) {
 
 export function cleanupExpiredMedia() {
   const now = Date.now();
-  for (const [id, job] of jobs) {
-    if (now - job.updatedAt > ASSET_TTL_MS) jobs.delete(id);
-  }
+  cleanupExpiredMediaJobs(now);
   for (const [id, asset] of assets) {
     if (now - asset.createdAt > ASSET_TTL_MS) {
       fs.rm(asset.filePath, { force: true }).catch(() => {});

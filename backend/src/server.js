@@ -280,7 +280,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && path === '/v1/ai/diagnostics') {
       const order = String(process.env.AI_PROVIDER_ORDER || 'gemini,groq,openrouter,deepseek,cloudflare,kilo,horde,pollinations,animica,ollama,anthropic,xai,openai')
         .split(',').map((id) => id.trim()).filter(Boolean);
-      return send(res, 200, buildAiDiagnostics(order));
+      return send(res, 200, await buildAiDiagnostics(order));
     }
     if (req.method === 'GET' && path === '/v1/ai/status') {
       const order = String(process.env.AI_PROVIDER_ORDER || 'gemini,groq,openrouter,deepseek,cloudflare,kilo,horde,pollinations,animica,ollama,anthropic,xai,openai')

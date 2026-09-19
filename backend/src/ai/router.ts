@@ -130,6 +130,7 @@ export async function generateHedged({
   }
   const timer = setTimeout(() => controller.abort(), budgetMs);
   const parallel = Math.min(Math.max(Number(maxParallel) || 2, 1), 3);
+  let winnerSelected = false;
 
   try {
     const candidates = [];
@@ -178,8 +179,7 @@ export async function generateHedged({
         trace[id] = 'ONLINE';
         return { ...result, provider: id, trace };
       } catch (error) {
-        if (controller.signal.aborted && signal?.aborted) throw error;
-        if (controller.signal.aborted && Date.now() >= deadline) throw error;
+        if (controller.signal.aborted && (signal?.aborted || winnerSelected || Date.now() >= deadline)) throw error;
         const healthRecord = health.recordFailure(id, error);
         trace[id] = healthRecord.state;
         throw error;
@@ -206,6 +206,7 @@ export async function generateHedged({
         if (index >= 0) pending.splice(index, 1);
 
         if (settled.ok) {
+          winnerSelected = true;
           controller.abort();
           return settled.result;
         }
