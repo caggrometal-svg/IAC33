@@ -49,6 +49,12 @@ jobs:
         run: |
           curl --fail --silent --show-error https://iac33-backend.onrender.com/health
           curl --fail --silent --show-error https://iac33-backend.onrender.com/ready
+      - name: Verify production AI
+        timeout-minutes: 3
+        env:
+          PRODUCTION_BASE_URL: https://iac33-backend.onrender.com
+        run: node backend/test/e2e-production-ai.mjs
+
       - name: Set up Node 24
         uses: actions/setup-node@v7
         with:
