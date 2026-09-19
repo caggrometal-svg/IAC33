@@ -505,6 +505,26 @@ fun MultimediaPanel() {
                             "video" -> StudioMediaKind.VIDEO
                             else -> sourceKind
                         }
+                        if (sourceKind == StudioMediaKind.VIDEO) {
+                            val clipDuration = readDurationMs(context, generatedUri)
+                            timelineClips = listOf(
+                                TimelineClipState(
+                                    id = java.util.UUID.randomUUID().toString(),
+                                    uri = generatedUri,
+                                    name = "Clip IA 1",
+                                    startMs = 0L,
+                                    endMs = clipDuration.takeIf { it > 0L }
+                                )
+                            )
+                            selectedClipIndex = 0
+                            durationMs = clipDuration
+                            startMs = 0L
+                            endMs = clipDuration
+                            playheadMs = 0L
+                        } else {
+                            timelineClips = emptyList()
+                            selectedClipIndex = 0
+                        }
                         mode = StudioMode.EDITOR
                         status = "Resultado importado al editor"
                     }
