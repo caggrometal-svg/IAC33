@@ -276,14 +276,28 @@ private fun AiPanel(
                     AiMessage(it.role, it.text.take(ChatStore.MAX_MESSAGE_CHARS))
                 }
 
+                var streamedText = ""
+                var lastUiPaintMs = 0L
                 val result = withTimeout(AI_UI_TIMEOUT_MS) {
-                    engine.generate(
+                    engine.generateStreaming(
                         AiRequest(
                             conversationId = UUID.randomUUID().toString(),
                             messages = messages,
                             timeoutMs = AI_REQUEST_TIMEOUT_MS
                         )
-                    )
+                    ) { delta ->
+                        streamedText += delta
+                        val now = System.currentTimeMillis()
+                        if (now - lastUiPaintMs >= 100L) {
+                            lastUiPaintMs = now
+                            withContext(Dispatchers.Main.immediate) {
+                                val visible = AiTextSanitizer.sanitize(streamedText)
+                                if (visible.isNotBlank()) {
+                                    onLinesChange(updated + ChatLine("assistant", visible, "remote"))
+                                }
+                            }
+                        }
+                    }
                 }
 
                 when (result) {
