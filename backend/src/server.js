@@ -283,18 +283,35 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, buildAiDiagnostics(order));
     }
     if (req.method === 'GET' && path === '/v1/ai/status') {
-      const order = String(process.env.AI_PROVIDER_ORDER || 'gemini,groq,openrouter,deepseek,cloudflare,kilo,horde,pollinations,animica,ollama,andrew2')
-        .split(',').map((id) => id.trim()).filter(Boolean);
+      const order = String(process.env.AI_PROVIDER_ORDER || 'gemini,groq,openrouter,deepseek,cloudflare,kilo,horde,pollinations,animica,ollama,anthropic,xai,openai')
+        .split(',').map((id) => id.trim().toLowerCase()).filter(Boolean);
+      const providerKeys = {
+        openai: 'OPENAI_API_KEY',
+        anthropic: 'ANTHROPIC_API_KEY',
+        deepseek: 'DEEPSEEK_API_KEY',
+        xai: 'XAI_API_KEY',
+        openrouter: 'OPENROUTER_API_KEY',
+        groq: 'GROQ_API_KEY',
+        gemini: 'GEMINI_API_KEY',
+        cloudflare: 'CLOUDFLARE_API_TOKEN',
+        ollama: 'IAC33_OLLAMA_API_KEY'
+      };
       const configured = order.filter((id) => {
-        const provider = { gemini: 'GEMINI_API_KEY', groq: 'GROQ_API_KEY', openrouter: 'OPENROUTER_API_KEY', deepseek: 'DEEPSEEK_API_KEY', cloudflare: 'CLOUDFLARE_API_TOKEN', ollama: 'IAC33_OLLAMA_API_KEY', anthropic: 'ANTHROPIC_API_KEY' }[id];
+        const provider = providerKeys[id];
         return !provider || Boolean(process.env[provider]);
       });
+      const providerStatus = order.map((id) => ({
+        id,
+        configured: !providerKeys[id] || Boolean(process.env[providerKeys[id]]),
+        auth: providerKeys[id] ? 'key' : 'none'
+      }));
       return send(res, 200, {
         ok: true,
         service: 'iac33-ai',
         router: 'free-pool',
         webContext: String(process.env.AI_WEB_CONTEXT || 'true').toLowerCase() !== 'false',
         providers: configured,
+        providerStatus,
         health: providerHealth.snapshot(order)
       });
     }
