@@ -441,6 +441,38 @@ private fun EditorStudio(
                         modifier = Modifier.fillMaxSize(),
                         update = { view -> view.player = previewPlayer }
                     )
+                } else if (sourceKind == StudioMediaKind.IMAGE && source != null) {
+                    AndroidView(
+                        factory = { ctx ->
+                            android.widget.ImageView(ctx).apply {
+                                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                                setImageURI(source)
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                        update = { view ->
+                            view.setImageURI(source)
+                            view.scaleType = if (aspect == AspectRatio.ORIGINAL)
+                                android.widget.ImageView.ScaleType.FIT_CENTER
+                            else
+                                android.widget.ImageView.ScaleType.CENTER_CROP
+                            val matrix = android.graphics.ColorMatrix().apply {
+                                val c = 1f + contrast.coerceIn(-1f, 1f)
+                                val t = (1f - c) * 127.5f + brightness.coerceIn(-1f, 1f) * 255f
+                                val base = floatArrayOf(
+                                    c,0f,0f,0f,t,
+                                    0f,c,0f,0f,t,
+                                    0f,0f,c,0f,t,
+                                    0f,0f,0f,1f,0f
+                                )
+                                set(base)
+                                postConcat(android.graphics.ColorMatrix().apply {
+                                    setSaturation(saturation.coerceIn(0f, 3f))
+                                })
+                            }
+                            view.colorFilter = android.graphics.ColorMatrixColorFilter(matrix)
+                        }
+                    )
                 } else {
                     Text("Importa una foto o vídeo", color = Color.White)
                 }
