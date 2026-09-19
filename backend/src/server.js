@@ -552,6 +552,16 @@ const server = http.createServer(async (req, res) => {
       const command = await claimNextCommand(typeof input.actor === 'string' && input.actor.trim() ? input.actor.trim() : 'worker');
       return send(res, 200, { ok: true, command });
     }
+    // Legacy Andrew2/Bridge V3 compatibility endpoint. It intentionally reuses
+    // IAC33's authenticated command store and atomic claim implementation.
+    if (req.method === 'GET' && path === '/api/v1/bridge/v3/commands') {
+      const command = await claimNextCommand('legacy-bridge-v3');
+      return send(res, 200, {
+        ok: true,
+        command,
+        commands: command ? [command] : []
+      });
+    }
     if (req.method === 'POST' && path === '/v1/device/commands/claim-next') {
       const command = await claimNextCommand(`device:${deviceAuth.deviceId}`, deviceAuth.deviceId);
       return send(res, 200, { ok: true, command });
