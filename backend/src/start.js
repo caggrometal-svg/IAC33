@@ -5,6 +5,16 @@ import { Pool } from 'pg';
 const port = Number(process.env.PORT || 3000);
 const databaseUrl = process.env.DATABASE_URL || '';
 const databaseNeedsSsl = databaseUrl && !/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(databaseUrl);
+function normalizeDatabaseUrl(value) {
+  if (!value || !databaseNeedsSsl) return value;
+  try {
+    const parsed = new URL(value);
+    parsed.searchParams.set('sslmode', 'verify-full');
+    return parsed.toString();
+  } catch {
+    return value;
+  }
+}
 const STARTUP_DB_TIMEOUT_MS = 2_000;
 const STARTUP_DB_RETRIES = 5;
 const STARTUP_DB_BACKOFF_MS = 500;
@@ -12,7 +22,6 @@ const STARTUP_DB_BACKOFF_MS = 500;
 const startupPool = databaseUrl
   ? new Pool({
       connectionString: normalizeDatabaseUrl(databaseUrl),
-      
       connectionTimeoutMillis: STARTUP_DB_TIMEOUT_MS,
       idleTimeoutMillis: 10_000,
       max: 1
