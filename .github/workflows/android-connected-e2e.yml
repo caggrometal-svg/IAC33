@@ -15,7 +15,7 @@ concurrency:
 jobs:
   android-connected:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -32,10 +32,11 @@ jobs:
           gradle-version: '8.13'
 
       - name: Run Android unit tests and build
+        timeout-minutes: 4
         run: gradle testDebugUnitTest assembleDebug --parallel --build-cache --no-daemon --console=plain
 
       - name: Run Android connected E2E
-        timeout-minutes: 25
+        timeout-minutes: 10
         uses: ReactiveCircus/android-emulator-runner@v2
         with:
           api-level: 34
